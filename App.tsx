@@ -24,6 +24,10 @@ const App: React.FC = () => {
   const connectionsRef = useRef<Map<string, DataConnection>>(new Map());
   const messagesEndRef = useRef<HTMLDivElement>(null);
   const isHostRef = useRef<boolean>(false);
+  const moodRef = useRef<ChatMood>('FUNNY'); // Ref to track mood for callbacks/sync
+  
+  // AI Control Refs
+  const lastAiTriggerRef = useRef<number>(0);
 
   // Check API Key
   const hasApiKey = !!process.env.API_KEY;
@@ -84,6 +88,13 @@ const App: React.FC = () => {
       // Handle incoming connection
       addMessage(`NEW ENCRYPTED CONNECTION RECEIVED.`, SenderType.SYSTEM);
       setupConnection(conn);
+      
+      // Sync current mood to new guest when they join
+      conn.on('open', () => {
+         if (isHostRef.current) {
+             conn.send({ type: 'mood_update', mood: moodRef.current });
+         }
+      });
     });
 
     peer.on('error', (err) => {
@@ -117,9 +128,9 @@ const App: React.FC = () => {
 
         // If I am Host, relay this message to everyone else
         if (isHostRef.current) {
-          broadcastMessage(data.text, conn.peer);
-          // TRIGGER AI CHECK
-          triggerGroupAI(data.text);
+          broadcastData({ type: 'message', text: data.text }, conn.peer);
+          // TRIGGER AI CHECK (Pass the sender's Peer ID)
+          triggerGroupAI(data.text, conn.peer);
         }
       } else if (data.type === 'typing') {
         setIsTyping(true);
@@ -127,8 +138,13 @@ const App: React.FC = () => {
         
         // Relay typing status to others if Host
         if (isHostRef.current) {
-            broadcastTyping(conn.peer);
+            broadcastData({ type: 'typing' }, conn.peer);
         }
+      } else if (data.type === 'mood_update') {
+          // Received mood update from Host
+          setMood(data.mood);
+          moodRef.current = data.mood;
+          addMessage(data.mood === 'FUNNY' ? "⚠️ SYSTEM: HOST ENABLED CHAOS MODE" : "⚠️ SYSTEM: HOST ENABLED SAD HOURS", SenderType.SYSTEM);
       }
     });
 
@@ -141,37 +157,47 @@ const App: React.FC = () => {
     });
   };
 
-  const broadcastMessage = (text: string, excludePeerId?: string) => {
+  const broadcastData = (data: any, excludePeerId?: string) => {
     connectionsRef.current.forEach((conn, peerId) => {
       if (peerId !== excludePeerId && conn.open) {
-        conn.send({ type: 'message', text });
+        conn.send(data);
       }
     });
   };
 
-  const broadcastTyping = (excludePeerId?: string) => {
-    connectionsRef.current.forEach((conn, peerId) => {
-      if (peerId !== excludePeerId && conn.open) {
-        conn.send({ type: 'typing' });
-      }
-    });
+  const broadcastMessage = (text: string) => {
+      broadcastData({ type: 'message', text });
+  };
+
+  const broadcastTyping = () => {
+      broadcastData({ type: 'typing' });
   };
 
   // --- AI LOGIC (GROUP & SOLO) ---
   
-  const triggerGroupAI = async (triggerText: string) => {
+  const triggerGroupAI = async (triggerText: string, senderId: string) => {
     if (!hasApiKey) return;
     
-    // KEYWORDS THAT TRIGGER AI
+    // KEYWORDS THAT TRIGGER AI (Immediate trigger)
     const lower = triggerText.toLowerCase();
     const keywords = ['lala', 'ghamgeen', 'khan', 'oye', 'bot', 'ai', 'chup', 'kaisa', 'hello', 'hi'];
-    
-    // 20% random chance OR 100% if keyword mentioned
     const isMention = keywords.some(k => lower.includes(k));
-    const isRandom = Math.random() < 0.2; 
+    
+    // RANDOM INTERVENTION LOGIC
+    // 1. Check cooldown: Don't random trigger if AI spoke in last 20 seconds
+    const now = Date.now();
+    const timeSinceLastReply = now - lastAiTriggerRef.current;
+    const cooldownMs = 20000; 
+
+    // 2. Chance: 5% chance if cooldown passed
+    const randomChance = 0.05; 
+    const isRandom = (timeSinceLastReply > cooldownMs) && (Math.random() < randomChance);
 
     if (isMention || isRandom) {
-       // Delay for realism
+       // Reset cooldown timer immediately so we don't double trigger
+       lastAiTriggerRef.current = now;
+
+       // Delay for realism (Human-like typing speed)
        const delay = 1500 + Math.random() * 2000;
        
        setTimeout(async () => {
@@ -181,13 +207,12 @@ const App: React.FC = () => {
            broadcastTyping();
 
            try {
-               // Re-init session if needed (e.g. if mood changed or session expired)
-               // Note: sendMessageToGemini handles basic init, but we might want to force instruction update if needed.
-               // For now, we assume the session is persistent. 
-               
-               // Inject a small system prompt into the message to give context it's a group chat reply
-               // We actually just send the message. The Instruction (CONSTANTS) handles the persona.
-               const response = await sendMessageToGemini(triggerText);
+               // Contextual Prompt: Include User ID so AI knows who is who
+               // We slice the ID to make it short and readable: "User a1b2"
+               const shortId = senderId.slice(0, 5);
+               const promptWithContext = `[User ${shortId}]: ${triggerText}`;
+
+               const response = await sendMessageToGemini(promptWithContext);
                
                setIsTyping(false);
                
@@ -196,6 +221,9 @@ const App: React.FC = () => {
                
                // Guests see AI message (sent as a regular message from Host)
                broadcastMessage(response);
+               
+               // Update timestamp again after sending
+               lastAiTriggerRef.current = Date.now();
                
            } catch (e) {
                console.error("AI Group Error", e);
@@ -298,11 +326,19 @@ const App: React.FC = () => {
   };
 
   const toggleMood = async () => {
-    // Mood toggling allowed in P2P too now, to change AI persona
+    // Only AI mode or P2P Host can toggle
+    if (mode === 'P2P' && !isHostRef.current) return;
+
     const newMood = mood === 'FUNNY' ? 'SAD' : 'FUNNY';
     setMood(newMood);
+    moodRef.current = newMood; // Update ref for sync
     
-    // If we are connected (AI or P2P Host), update the session
+    // Broadcast mood change if P2P Host
+    if (mode === 'P2P' && isHostRef.current) {
+        broadcastData({ type: 'mood_update', mood: newMood });
+    }
+    
+    // If we are connected (AI or P2P Host), update the session and react
     if (status === ConnectionStatus.CONNECTED) {
         addMessage(newMood === 'FUNNY' ? "⚠️ SYSTEM: ENTERING CHAOS MODE" : "⚠️ SYSTEM: ENTERING SAD HOURS", SenderType.SYSTEM);
         
@@ -361,11 +397,12 @@ const App: React.FC = () => {
       broadcastMessage(userMsg);
       // Trigger AI if Host
       if (isHostRef.current) {
-          triggerGroupAI(userMsg);
+          // Identify myself as 'HOST' to the AI
+          triggerGroupAI(userMsg, 'HOST');
       }
     }
     
-    // AI SEND
+    // AI SEND (Solo Mode)
     if (mode === 'AI' && status === ConnectionStatus.CONNECTED) {
       setIsTyping(true);
       const typingDelay = Math.random() * 1500 + 500; 
