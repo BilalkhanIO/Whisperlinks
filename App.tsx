@@ -20,8 +20,10 @@ const App: React.FC = () => {
   
   // Refs for P2P
   const peerRef = useRef<Peer | null>(null);
-  const connRef = useRef<DataConnection | null>(null);
+  // Store multiple connections for Group Chat (Star Topology: Host <-> Many Guests)
+  const connectionsRef = useRef<Map<string, DataConnection>>(new Map());
   const messagesEndRef = useRef<HTMLDivElement>(null);
+  const isHostRef = useRef<boolean>(false);
 
   // Check API Key
   const hasApiKey = !!process.env.API_KEY;
@@ -48,9 +50,11 @@ const App: React.FC = () => {
   // --- P2P LOGIC ---
   const initializePeer = (isHost: boolean, hostId?: string) => {
     setStatus(ConnectionStatus.SEARCHING);
+    isHostRef.current = isHost;
     
     // Clean up old peer
     if (peerRef.current) peerRef.current.destroy();
+    connectionsRef.current.clear();
 
     const peer = new Peer();
     peerRef.current = peer;
@@ -61,7 +65,8 @@ const App: React.FC = () => {
       
       if (isHost) {
         setStatus(ConnectionStatus.WAITING_FOR_PEER);
-        addMessage(`ROOM CREATED. Waiting for other user...`, SenderType.SYSTEM);
+        addMessage(`SECURE ROOM CREATED. ID: ${id}`, SenderType.SYSTEM);
+        addMessage(`Waiting for participants...`, SenderType.SYSTEM);
       } else if (hostId) {
         addMessage(`CONNECTING TO SECURE ROOM...`, SenderType.SYSTEM);
         const conn = peer.connect(hostId);
@@ -70,44 +75,70 @@ const App: React.FC = () => {
     });
 
     peer.on('connection', (conn) => {
-      // Handle incoming connection (Host side)
-      if (status !== ConnectionStatus.CONNECTED) {
-        addMessage(`USER JOINED ENCRYPTED CHANNEL.`, SenderType.SYSTEM);
-        setupConnection(conn);
-      }
+      // Handle incoming connection
+      // If we are Host, we accept. If we are Guest, we generally don't expect incoming unless we implement mesh later.
+      // But in Star topology, Guests connect to Host.
+      addMessage(`NEW ENCRYPTED CONNECTION RECEIVED.`, SenderType.SYSTEM);
+      setupConnection(conn);
     });
 
     peer.on('error', (err) => {
       console.error('Peer error:', err);
-      addMessage(`CONNECTION ERROR: ${err.type}`, SenderType.SYSTEM);
-      setStatus(ConnectionStatus.DISCONNECTED);
+      // Ignore some non-critical errors or retry
+      if (err.type === 'peer-unavailable') {
+         addMessage(`ERROR: Room not found or Host is offline.`, SenderType.SYSTEM);
+      } else {
+         addMessage(`CONNECTION ERROR: ${err.type}`, SenderType.SYSTEM);
+      }
+      if (!connectionsRef.current.size) {
+         setStatus(ConnectionStatus.DISCONNECTED);
+      }
     });
   };
 
   const setupConnection = (conn: DataConnection) => {
-    connRef.current = conn;
+    // Add to connections map
+    connectionsRef.current.set(conn.peer, conn);
 
     conn.on('open', () => {
       setStatus(ConnectionStatus.CONNECTED);
       setMode('P2P');
-      addMessage(`SECURE P2P CONNECTION ESTABLISHED.`, SenderType.SYSTEM);
+      // If this is the first connection, system msg. 
+      // Actually we might have multiple. 
+      // We don't want to spam "Connected" if we are Host and 10 people join.
+      // But for now it's fine.
     });
 
     conn.on('data', (data: any) => {
       if (data.type === 'message') {
         setIsTyping(false);
+        // Display the message
         addMessage(data.text, SenderType.STRANGER);
+
+        // If I am Host, relay this message to everyone else
+        if (isHostRef.current) {
+          broadcastMessage(data.text, conn.peer);
+        }
       } else if (data.type === 'typing') {
         setIsTyping(true);
-        // Clear typing indicator after 2 seconds of no updates
         setTimeout(() => setIsTyping(false), 2000);
       }
     });
 
     conn.on('close', () => {
-      addMessage(`PEER DISCONNECTED.`, SenderType.SYSTEM);
-      setStatus(ConnectionStatus.DISCONNECTED);
-      connRef.current = null;
+      addMessage(`A PEER DISCONNECTED.`, SenderType.SYSTEM);
+      connectionsRef.current.delete(conn.peer);
+      if (connectionsRef.current.size === 0 && !isHostRef.current) {
+        setStatus(ConnectionStatus.DISCONNECTED);
+      }
+    });
+  };
+
+  const broadcastMessage = (text: string, excludePeerId?: string) => {
+    connectionsRef.current.forEach((conn, peerId) => {
+      if (peerId !== excludePeerId && conn.open) {
+        conn.send({ type: 'message', text });
+      }
     });
   };
 
@@ -181,7 +212,7 @@ const App: React.FC = () => {
       peerRef.current.destroy();
       peerRef.current = null;
     }
-    connRef.current = null;
+    connectionsRef.current.clear();
     
     setStatus(ConnectionStatus.DISCONNECTED);
     window.history.pushState({}, '', window.location.pathname); // Clear URL
@@ -245,8 +276,9 @@ const App: React.FC = () => {
     addMessage(userMsg, SenderType.USER);
 
     // P2P SEND
-    if (mode === 'P2P' && connRef.current) {
-      connRef.current.send({ type: 'message', text: userMsg });
+    if (mode === 'P2P') {
+      // Send to all connected peers
+      broadcastMessage(userMsg);
     }
     
     // AI SEND
@@ -269,8 +301,10 @@ const App: React.FC = () => {
 
   const handleInputTyping = (e: React.ChangeEvent<HTMLInputElement>) => {
     setInputText(e.target.value);
-    if (mode === 'P2P' && connRef.current) {
-      connRef.current.send({ type: 'typing' });
+    if (mode === 'P2P') {
+       connectionsRef.current.forEach(conn => {
+         if (conn.open) conn.send({ type: 'typing' });
+       });
     }
   };
 
@@ -291,7 +325,7 @@ const App: React.FC = () => {
         </h1>
         <p className="text-zinc-500 max-w-sm mx-auto">
           Encrypted Channels. <br/>
-          <span className="text-neon-purple text-sm">Chat with AI or Invite a Human.</span>
+          <span className="text-neon-purple text-sm">Chat with AI or Invite Humans.</span>
         </p>
         {!hasApiKey && (
           <div className="p-2 bg-red-900/30 border border-red-800 rounded text-red-400 text-xs mt-4">
@@ -335,7 +369,7 @@ const App: React.FC = () => {
                 <Users size={32} className="text-neon-green" />
             </div>
             <h2 className="text-xl font-bold text-white">Room Created</h2>
-            <p className="text-zinc-400 text-sm">Share this secure link with your friend to start chatting.</p>
+            <p className="text-zinc-400 text-sm">Share this secure link to invite others.</p>
             
             <button 
               onClick={handleCopyInvite}
@@ -345,6 +379,9 @@ const App: React.FC = () => {
                <Copy size={14} className="text-zinc-300" />
             </button>
             {showInviteToast && <span className="text-xs text-neon-green animate-pulse">Copied to clipboard!</span>}
+            <div className="text-zinc-500 text-xs mt-4">
+               Waiting for incoming connections... ({connectionsRef.current.size} connected)
+            </div>
          </div>
       ) : (
         <>
@@ -370,7 +407,7 @@ const App: React.FC = () => {
           <div className="flex items-center gap-2 pointer-events-auto bg-void-black/50 backdrop-blur-sm p-2 rounded-full border border-white/5">
              <div className={`w-2 h-2 rounded-full animate-pulse ${mode === 'P2P' ? 'bg-blue-500' : 'bg-neon-green'}`}></div>
              <span className="font-mono text-xs text-zinc-300 tracking-widest opacity-90">
-                 {mode === 'P2P' ? "ENCRYPTED_PEER" : (mood === 'FUNNY' ? "LALA_ONLINE" : "SAD_HOURS")}
+                 {mode === 'P2P' ? `ENCRYPTED_PEER (${connectionsRef.current.size + 1})` : (mood === 'FUNNY' ? "LALA_ONLINE" : "SAD_HOURS")}
              </span>
           </div>
           
