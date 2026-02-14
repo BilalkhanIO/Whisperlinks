@@ -1,0 +1,5 @@
+{
+  "name": "WhisperLink",
+  "description": "An anonymous, ephemeral chat interface where identity is hidden and conversations are secret.",
+  "requestFramePermissions": []
+}
