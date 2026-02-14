@@ -5,7 +5,7 @@ import { sendMessageToGemini, initializeChatSession, resetSession } from './serv
 import { ChatMessage } from './components/ChatMessage';
 import { EncryptionEffect } from './components/EncryptionEffect';
 import { LOADING_MESSAGES, FUNNY_INSTRUCTION, SAD_INSTRUCTION } from './constants';
-import { Send, Power, RefreshCw, Lock, Terminal, Shield, Globe, UserPlus, Smile, Frown, Copy, Users, Bot } from 'lucide-react';
+import { Send, Power, RefreshCw, Lock, Terminal, Shield, Globe, UserPlus, Smile, Frown, Copy, Users, Bot, Sparkles } from 'lucide-react';
 
 const App: React.FC = () => {
   // State
@@ -67,6 +67,12 @@ const App: React.FC = () => {
         setStatus(ConnectionStatus.WAITING_FOR_PEER);
         addMessage(`SECURE ROOM CREATED. ID: ${id}`, SenderType.SYSTEM);
         addMessage(`Waiting for participants...`, SenderType.SYSTEM);
+        
+        // Initialize AI silently for the Host so it's ready to jump in
+        if (hasApiKey) {
+           initializeChatSession(mood === 'FUNNY' ? FUNNY_INSTRUCTION : SAD_INSTRUCTION)
+             .catch(() => console.log("AI init deferred"));
+        }
       } else if (hostId) {
         addMessage(`CONNECTING TO SECURE ROOM...`, SenderType.SYSTEM);
         const conn = peer.connect(hostId);
@@ -76,8 +82,6 @@ const App: React.FC = () => {
 
     peer.on('connection', (conn) => {
       // Handle incoming connection
-      // If we are Host, we accept. If we are Guest, we generally don't expect incoming unless we implement mesh later.
-      // But in Star topology, Guests connect to Host.
       addMessage(`NEW ENCRYPTED CONNECTION RECEIVED.`, SenderType.SYSTEM);
       setupConnection(conn);
     });
@@ -103,10 +107,6 @@ const App: React.FC = () => {
     conn.on('open', () => {
       setStatus(ConnectionStatus.CONNECTED);
       setMode('P2P');
-      // If this is the first connection, system msg. 
-      // Actually we might have multiple. 
-      // We don't want to spam "Connected" if we are Host and 10 people join.
-      // But for now it's fine.
     });
 
     conn.on('data', (data: any) => {
@@ -118,10 +118,17 @@ const App: React.FC = () => {
         // If I am Host, relay this message to everyone else
         if (isHostRef.current) {
           broadcastMessage(data.text, conn.peer);
+          // TRIGGER AI CHECK
+          triggerGroupAI(data.text);
         }
       } else if (data.type === 'typing') {
         setIsTyping(true);
         setTimeout(() => setIsTyping(false), 2000);
+        
+        // Relay typing status to others if Host
+        if (isHostRef.current) {
+            broadcastTyping(conn.peer);
+        }
       }
     });
 
@@ -142,7 +149,62 @@ const App: React.FC = () => {
     });
   };
 
-  // --- AI LOGIC ---
+  const broadcastTyping = (excludePeerId?: string) => {
+    connectionsRef.current.forEach((conn, peerId) => {
+      if (peerId !== excludePeerId && conn.open) {
+        conn.send({ type: 'typing' });
+      }
+    });
+  };
+
+  // --- AI LOGIC (GROUP & SOLO) ---
+  
+  const triggerGroupAI = async (triggerText: string) => {
+    if (!hasApiKey) return;
+    
+    // KEYWORDS THAT TRIGGER AI
+    const lower = triggerText.toLowerCase();
+    const keywords = ['lala', 'ghamgeen', 'khan', 'oye', 'bot', 'ai', 'chup', 'kaisa', 'hello', 'hi'];
+    
+    // 20% random chance OR 100% if keyword mentioned
+    const isMention = keywords.some(k => lower.includes(k));
+    const isRandom = Math.random() < 0.2; 
+
+    if (isMention || isRandom) {
+       // Delay for realism
+       const delay = 1500 + Math.random() * 2000;
+       
+       setTimeout(async () => {
+           // Show typing on Host
+           setIsTyping(true);
+           // Show typing to Guests (as if a user is typing)
+           broadcastTyping();
+
+           try {
+               // Re-init session if needed (e.g. if mood changed or session expired)
+               // Note: sendMessageToGemini handles basic init, but we might want to force instruction update if needed.
+               // For now, we assume the session is persistent. 
+               
+               // Inject a small system prompt into the message to give context it's a group chat reply
+               // We actually just send the message. The Instruction (CONSTANTS) handles the persona.
+               const response = await sendMessageToGemini(triggerText);
+               
+               setIsTyping(false);
+               
+               // Host sees AI message
+               addMessage(response, SenderType.STRANGER);
+               
+               // Guests see AI message (sent as a regular message from Host)
+               broadcastMessage(response);
+               
+           } catch (e) {
+               console.error("AI Group Error", e);
+               setIsTyping(false);
+           }
+       }, delay);
+    }
+  };
+
   const handleConnectAI = async () => {
     setMode('AI');
     setStatus(ConnectionStatus.SEARCHING);
@@ -236,25 +298,43 @@ const App: React.FC = () => {
   };
 
   const toggleMood = async () => {
-    if (mode === 'P2P') return; // Moods are AI only for now
-    
+    // Mood toggling allowed in P2P too now, to change AI persona
     const newMood = mood === 'FUNNY' ? 'SAD' : 'FUNNY';
     setMood(newMood);
     
-    if (status === ConnectionStatus.CONNECTED && mode === 'AI') {
+    // If we are connected (AI or P2P Host), update the session
+    if (status === ConnectionStatus.CONNECTED) {
         addMessage(newMood === 'FUNNY' ? "⚠️ SYSTEM: ENTERING CHAOS MODE" : "⚠️ SYSTEM: ENTERING SAD HOURS", SenderType.SYSTEM);
         
+        // Reset and re-init with new persona
+        resetSession();
         const instruction = newMood === 'FUNNY' ? FUNNY_INSTRUCTION : SAD_INSTRUCTION;
-        await initializeChatSession(instruction);
         
-        setIsTyping(true);
-        const reactionPrompt = newMood === 'FUNNY' 
-            ? "The mood has changed to FUNNY. React loudly." 
-            : "The mood has changed to SAD. React with a sigh.";
-        
-        const response = await sendMessageToGemini(reactionPrompt);
-        setIsTyping(false);
-        addMessage(response, SenderType.STRANGER);
+        if (hasApiKey) {
+            await initializeChatSession(instruction);
+            
+            // If in AI mode, react immediately. 
+            // If in P2P mode, wait for next trigger or react now? 
+            // Let's react now to show the change.
+            if (mode === 'AI' || isHostRef.current) {
+                setIsTyping(true);
+                // Broadcast typing in P2P
+                if (mode === 'P2P') broadcastTyping();
+
+                const reactionPrompt = newMood === 'FUNNY' 
+                    ? "The mood has changed to FUNNY. React loudly." 
+                    : "The mood has changed to SAD. React with a sigh.";
+                
+                try {
+                    const response = await sendMessageToGemini(reactionPrompt);
+                    setIsTyping(false);
+                    addMessage(response, SenderType.STRANGER);
+                    if (mode === 'P2P') broadcastMessage(response);
+                } catch(e) {
+                    setIsTyping(false);
+                }
+            }
+        }
     }
   };
 
@@ -279,6 +359,10 @@ const App: React.FC = () => {
     if (mode === 'P2P') {
       // Send to all connected peers
       broadcastMessage(userMsg);
+      // Trigger AI if Host
+      if (isHostRef.current) {
+          triggerGroupAI(userMsg);
+      }
     }
     
     // AI SEND
@@ -412,6 +496,18 @@ const App: React.FC = () => {
           </div>
           
           <div className="flex gap-2 pointer-events-auto">
+              {/* Mood Toggle allowed in P2P too now */}
+              {(mode === 'AI' || (mode === 'P2P' && isHostRef.current)) && (
+                   <button
+                   type="button"
+                   onClick={toggleMood}
+                   className={`p-2 rounded-full transition-colors bg-void-dark/50 ${mood === 'FUNNY' ? 'text-neon-green hover:bg-neon-green/10' : 'text-blue-400 hover:bg-blue-400/10'}`}
+                   title="Toggle Persona (Lala/Ghamgeen)"
+               >
+                   {mood === 'FUNNY' ? <Smile size={18} /> : <Frown size={18} />}
+               </button>
+              )}
+
               {mode === 'P2P' && (
                   <button 
                   onClick={handleCopyInvite}
@@ -470,17 +566,6 @@ const App: React.FC = () => {
                   onSubmit={handleSendMessage}
                   className="max-w-2xl mx-auto flex gap-3 items-end"
                 >
-                  {mode === 'AI' && (
-                    <button
-                        type="button"
-                        onClick={toggleMood}
-                        className={`p-3 rounded-full transition-colors mb-0.5 ${mood === 'FUNNY' ? 'text-neon-green hover:bg-neon-green/10' : 'text-blue-400 hover:bg-blue-400/10'}`}
-                        title="Toggle Vibe"
-                    >
-                        {mood === 'FUNNY' ? <Smile size={20} /> : <Frown size={20} />}
-                    </button>
-                  )}
-
                   <div className="relative flex-1 bg-void-dark rounded-2xl border border-void-gray focus-within:border-zinc-500 focus-within:ring-1 focus-within:ring-zinc-500 transition-all">
                     <input
                       type="text"
@@ -502,7 +587,10 @@ const App: React.FC = () => {
                 </form>
                 <div className="text-center mt-2">
                    <span className="text-[10px] text-zinc-600 flex items-center justify-center gap-1">
-                     <Shield size={10} /> {mode === 'P2P' ? 'P2P Encryption Active' : 'AI Simulation Active'}
+                     <Shield size={10} /> 
+                     {mode === 'P2P' ? (
+                        <>P2P Encrypted {isHostRef.current && hasApiKey && <span className="text-neon-purple">• AI Active</span>}</>
+                     ) : 'AI Simulation Active'}
                    </span>
                 </div>
               </div>
