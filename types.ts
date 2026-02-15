@@ -8,8 +8,15 @@ export interface Message {
   id: string;
   text: string;
   sender: SenderType;
+  username?: string; // Added for identity
   timestamp: Date;
   isEncrypted?: boolean; // For visual effect
+}
+
+export interface UserInfo {
+  peerId: string;
+  username: string;
+  isHost: boolean;
 }
 
 export enum ConnectionStatus {
