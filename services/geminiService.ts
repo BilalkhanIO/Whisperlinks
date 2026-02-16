@@ -1,52 +1,101 @@
 import { GoogleGenAI, Chat } from "@google/genai";
-import { FUNNY_INSTRUCTION } from "../constants";
+import { buildInstruction } from "../constants";
+import { ChatMood, ChatLanguage } from "../types";
 
 let chatSession: Chat | null = null;
 let genAI: GoogleGenAI | null = null;
+let currentInstruction: string = '';
 
-export const initializeChatSession = async (instruction: string = FUNNY_INSTRUCTION): Promise<void> => {
-  if (!process.env.API_KEY) {
-    throw new Error("API Key is missing");
+const getGenAI = (): GoogleGenAI => {
+  if (!process.env.API_KEY) throw new Error("API Key is missing");
+  if (!genAI) {
+    genAI = new GoogleGenAI({ apiKey: process.env.API_KEY });
   }
+  return genAI;
+};
 
-  genAI = new GoogleGenAI({ apiKey: process.env.API_KEY });
-  
-  chatSession = genAI.chats.create({
-    model: "gemini-3-flash-preview",
+export const initializeChatSession = async (
+  instruction: string,
+  mood?: ChatMood,
+  language?: ChatLanguage,
+  username?: string
+): Promise<void> => {
+  const ai = getGenAI();
+
+  currentInstruction = (mood && language && username)
+    ? buildInstruction(mood, language, username)
+    : instruction;
+
+  chatSession = ai.chats.create({
+    model: "gemini-2.5-flash-preview-04-17",
     config: {
-      systemInstruction: instruction,
-      temperature: 1.1, // Higher temperature for more chaotic/creative responses
+      systemInstruction: currentInstruction,
+      temperature: mood === 'FACTCHECK' ? 0.2 : mood === 'CHILL' ? 0.7 : 1.1,
       topP: 0.95,
       topK: 64,
     },
   });
 };
 
+/**
+ * Send a message and stream the response back token-by-token
+ * onChunk is called with accumulated text for real-time display
+ */
+export const sendMessageStreaming = async (
+  message: string,
+  onChunk: (accumulated: string) => void
+): Promise<string> => {
+  if (!chatSession) {
+    await initializeChatSession(currentInstruction || '');
+  }
+  if (!chatSession) throw new Error("Failed to initialize chat session");
+
+  try {
+    const stream = await chatSession.sendMessageStream({ message });
+    let accumulated = '';
+
+    for await (const chunk of stream) {
+      const text = chunk.text || '';
+      accumulated += text;
+      onChunk(accumulated);
+    }
+
+    return accumulated || "...";
+  } catch (error) {
+    console.error("Gemini Stream Error:", error);
+    // Fallback to non-streaming
+    try {
+      return await sendMessageToGemini(message);
+    } catch (fallbackError) {
+      return "Connection hiccup... try again! ⚡";
+    }
+  }
+};
+
+/**
+ * Send a standard (non-streaming) message
+ */
 export const sendMessageToGemini = async (message: string): Promise<string> => {
   if (!chatSession) {
-    await initializeChatSession();
+    await initializeChatSession(currentInstruction || '');
   }
-
-  if (!chatSession) {
-    throw new Error("Failed to initialize chat session");
-  }
+  if (!chatSession) throw new Error("Failed to initialize chat session");
 
   try {
     const result = await chatSession.sendMessage({ message });
     return result.text || "...";
   } catch (error) {
     console.error("Gemini API Error:", error);
-    // Attempt to re-init if session is stale/broken
     try {
-        await initializeChatSession(); 
-        if(chatSession) {
-             const retryResult = await chatSession.sendMessage({ message });
-             return retryResult.text || "...";
-        }
-    } catch(retryError) {
-        console.error("Retry failed", retryError);
+      await initializeChatSession(currentInstruction);
+      if (chatSession) {
+        const retryResult = await chatSession.sendMessage({ message });
+        return retryResult.text || "...";
+      }
+    } catch (retryError) {
+      console.error("Retry failed", retryError);
     }
-    return "Oye, internet chala gaya lagta hai! (Connection Error)";
+    return "Connection issue... try again! ⚡";
   }
 };
 

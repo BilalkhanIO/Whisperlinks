@@ -1,50 +1,53 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useRef } from 'react';
 
 interface EncryptionEffectProps {
   text: string;
-  duration?: number; // ms
+  duration?: number;
   reveal?: boolean;
 }
 
 const CHARS = "ABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789@#$%&";
 
-export const EncryptionEffect: React.FC<EncryptionEffectProps> = ({ text, duration = 1000, reveal = true }) => {
+export const EncryptionEffect: React.FC<EncryptionEffectProps> = React.memo(({ text, duration = 800, reveal = true }) => {
   const [displayText, setDisplayText] = useState('');
-  
+  const frameRef = useRef<number>(0);
+
   useEffect(() => {
     let startTime: number;
-    let animationFrame: number;
 
     const animate = (timestamp: number) => {
       if (!startTime) startTime = timestamp;
       const progress = timestamp - startTime;
-      
+
       if (progress >= duration) {
         setDisplayText(text);
         return;
       }
 
-      const revealIdx = Math.floor((progress / duration) * text.length);
-      
-      let scrambled = '';
+      const ratio = progress / duration;
+      const revealIdx = Math.floor(ratio * text.length);
+
+      // Build string more efficiently
+      const chars: string[] = new Array(text.length);
       for (let i = 0; i < text.length; i++) {
         if (i < revealIdx && reveal) {
-          scrambled += text[i];
+          chars[i] = text[i];
         } else if (text[i] === ' ') {
-          scrambled += ' ';
+          chars[i] = ' ';
         } else {
-          scrambled += CHARS[Math.floor(Math.random() * CHARS.length)];
+          chars[i] = CHARS[(Math.random() * CHARS.length) | 0];
         }
       }
-      
-      setDisplayText(scrambled);
-      animationFrame = requestAnimationFrame(animate);
+
+      setDisplayText(chars.join(''));
+      frameRef.current = requestAnimationFrame(animate);
     };
 
-    animationFrame = requestAnimationFrame(animate);
-
-    return () => cancelAnimationFrame(animationFrame);
+    frameRef.current = requestAnimationFrame(animate);
+    return () => cancelAnimationFrame(frameRef.current);
   }, [text, duration, reveal]);
 
   return <span>{displayText}</span>;
-};
+});
+
+EncryptionEffect.displayName = 'EncryptionEffect';

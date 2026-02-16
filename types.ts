@@ -1,6 +1,6 @@
 export enum SenderType {
   USER = 'USER',
-  STRANGER = 'STRANGER', // AI or Peer
+  STRANGER = 'STRANGER',
   SYSTEM = 'SYSTEM'
 }
 
@@ -8,9 +8,11 @@ export interface Message {
   id: string;
   text: string;
   sender: SenderType;
-  username?: string; // Added for identity
+  username?: string;
   timestamp: Date;
-  isEncrypted?: boolean; // For visual effect
+  isEncrypted?: boolean;
+  isFactCheck?: boolean;
+  isStreaming?: boolean; // Currently being streamed
 }
 
 export interface UserInfo {
@@ -21,12 +23,29 @@ export interface UserInfo {
 
 export enum ConnectionStatus {
   IDLE = 'IDLE',
-  SEARCHING = 'SEARCHING', // AI Search or P2P Init
-  WAITING_FOR_PEER = 'WAITING_FOR_PEER', // P2P Host waiting
+  SEARCHING = 'SEARCHING',
+  WAITING_FOR_PEER = 'WAITING_FOR_PEER',
   CONNECTED = 'CONNECTED',
   DISCONNECTED = 'DISCONNECTED'
 }
 
-export type ChatMood = 'FUNNY' | 'SAD';
-
+export type ChatMood = 'FUNNY' | 'SAD' | 'SAVAGE' | 'CHILL' | 'FACTCHECK';
+export type ChatLanguage = 'EN' | 'UR' | 'PS' | 'AR' | 'HI';
 export type ChatMode = 'AI' | 'P2P';
+
+export interface MoodConfig {
+  key: ChatMood;
+  name: string;
+  persona: string;
+  icon: string;
+  accent: string;
+  accentHex: string;
+  description: string;
+}
+
+export interface LanguageConfig {
+  key: ChatLanguage;
+  label: string;
+  flag: string;
+  nativeName: string;
+}
