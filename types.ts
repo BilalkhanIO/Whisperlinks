@@ -8,9 +8,9 @@ export interface Message {
   id: string;
   text: string;
   sender: SenderType;
-  username?: string; // Added for identity
+  username?: string;
   timestamp: Date;
-  isEncrypted?: boolean; // For visual effect
+  isEncrypted?: boolean;
 }
 
 export interface UserInfo {
@@ -21,12 +21,14 @@ export interface UserInfo {
 
 export enum ConnectionStatus {
   IDLE = 'IDLE',
-  SEARCHING = 'SEARCHING', // AI Search or P2P Init
-  WAITING_FOR_PEER = 'WAITING_FOR_PEER', // P2P Host waiting
+  SEARCHING = 'SEARCHING',
+  WAITING_FOR_PEER = 'WAITING_FOR_PEER',
   CONNECTED = 'CONNECTED',
   DISCONNECTED = 'DISCONNECTED'
 }
 
-export type ChatMood = 'FUNNY' | 'SAD';
+export type ChatMood = 'FUNNY' | 'SAD' | 'FACT_CHECK' | 'FLIRTY' | 'ANGRY';
+
+export type ChatLanguage = 'ENGLISH' | 'ROMAN_URDU' | 'SPANISH' | 'FRENCH' | 'GERMAN' | 'JAPANESE' | 'ARABIC' | 'HINDI';
 
 export type ChatMode = 'AI' | 'P2P';

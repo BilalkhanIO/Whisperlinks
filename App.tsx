@@ -1,76 +1,139 @@
-import React, { useState, useEffect, useRef } from 'react';
+import React, { useState, useEffect, useRef, useCallback } from 'react';
 import Peer, { DataConnection } from 'peerjs';
-import { Message, SenderType, ConnectionStatus, ChatMood, ChatMode, UserInfo } from './types';
+import { Message, SenderType, ConnectionStatus, ChatMood, ChatMode, UserInfo, ChatLanguage } from './types';
 import { sendMessageToGemini, initializeChatSession, resetSession, generateSpeech } from './services/geminiService';
 import { playSound, decodeAndPlayAudio } from './services/audioService';
 import { ChatMessage } from './components/ChatMessage';
 import { EncryptionEffect } from './components/EncryptionEffect';
 import MatrixRain from './components/MatrixRain';
-import { LOADING_MESSAGES, FUNNY_INSTRUCTION, SAD_INSTRUCTION } from './constants';
-import { Send, Power, Lock, Terminal, Shield, UserPlus, Smile, Frown, Copy, Users, Bot, Menu, X, Volume2, VolumeX, Mic, MicOff } from 'lucide-react';
+import { SettingsPanel } from './components/SettingsPanel';
+import { loadPrefs, savePrefs } from './utils';
+import { Send, Power, Copy, Users, Bot, Menu, Settings, Mic, MicOff, Loader2 } from 'lucide-react';
 
 const App: React.FC = () => {
   // --- STATE ---
-  const [username, setUsername] = useState('');
+  const [prefs, setPrefs] = useState(loadPrefs());
   const [isInLobby, setIsInLobby] = useState(true);
   
   const [status, setStatus] = useState<ConnectionStatus>(ConnectionStatus.IDLE);
   const [mode, setMode] = useState<ChatMode>('AI');
   const [messages, setMessages] = useState<Message[]>([]);
   const [inputText, setInputText] = useState('');
-  const [isTyping, setIsTyping] = useState(false);
-  const [mood, setMood] = useState<ChatMood>('FUNNY');
+  
+  // Smart AI State
+  const [isLocalTyping, setIsLocalTyping] = useState(false);
+  const [isRemoteTyping, setIsRemoteTyping] = useState(false);
+  const [showSettings, setShowSettings] = useState(false);
   const [showInviteToast, setShowInviteToast] = useState(false);
   const [peerId, setPeerId] = useState<string | null>(null);
   
-  // Settings
-  const [isSfxEnabled, setIsSfxEnabled] = useState(true);
-  const [isVoiceEnabled, setIsVoiceEnabled] = useState(false);
+  // Voice Input State
+  const [isListening, setIsListening] = useState(false);
   
-  // Participant State
+  // Participants
   const [participants, setParticipants] = useState<UserInfo[]>([]);
-  const [showSidebar, setShowSidebar] = useState(false);
 
   // --- REFS ---
   const peerRef = useRef<Peer | null>(null);
   const connectionsRef = useRef<Map<string, DataConnection>>(new Map());
   const messagesEndRef = useRef<HTMLDivElement>(null);
   const isHostRef = useRef<boolean>(false);
-  const moodRef = useRef<ChatMood>('FUNNY'); 
-  const usernameRef = useRef<string>('');
-  const lastAiTriggerRef = useRef<number>(0);
-
+  const recognitionRef = useRef<any>(null);
+  
+  // Intelligent Timing Refs
+  const lastActivityTimeRef = useRef<number>(Date.now());
+  const aiTimeoutRef = useRef<NodeJS.Timeout | null>(null);
+  const typingTimeoutRef = useRef<NodeJS.Timeout | null>(null);
+  
   const hasApiKey = !!process.env.API_KEY;
 
-  // --- EFFECTS ---
-
+  // --- INITIALIZATION ---
   useEffect(() => {
-    // Check for join parameter
     const params = new URLSearchParams(window.location.search);
-    const joinParam = params.get('join');
-    
-    if (joinParam) {
-      setMode('P2P');
-    }
+    if (params.get('join')) setMode('P2P');
   }, []);
 
-  const scrollToBottom = () => {
+  useEffect(() => {
     messagesEndRef.current?.scrollIntoView({ behavior: 'smooth' });
+  }, [messages, isLocalTyping, isRemoteTyping]);
+
+  // --- SETTINGS HANDLERS ---
+  const updatePref = (key: keyof typeof prefs, value: any) => {
+    const newPrefs = { ...prefs, [key]: value };
+    setPrefs(newPrefs);
+    savePrefs(newPrefs);
+    
+    // If connected, reinitalize AI context
+    if (status === ConnectionStatus.CONNECTED && (key === 'mood' || key === 'language')) {
+       initializeChatSession(newPrefs.mood, newPrefs.language);
+       
+       if (mode === 'P2P' && isHostRef.current) {
+          // Sync with peers if host
+          broadcastData({ type: 'sys_update', mood: newPrefs.mood, lang: newPrefs.language });
+       }
+       addMessage(`SYSTEM: RECONFIGURING TO [${newPrefs.mood}] IN [${newPrefs.language}]`, SenderType.SYSTEM);
+    }
   };
 
-  useEffect(() => {
-    scrollToBottom();
-  }, [messages, isTyping]);
+  // --- VOICE INPUT HANDLER ---
+  const toggleListening = () => {
+    if (isListening) {
+      recognitionRef.current?.stop();
+      setIsListening(false);
+      return;
+    }
 
-  // --- LOBBY HANDLERS ---
-  
+    const SpeechRecognition = (window as any).SpeechRecognition || (window as any).webkitSpeechRecognition;
+    if (!SpeechRecognition) {
+      alert("Voice input is not supported in this browser.");
+      return;
+    }
+
+    const recognition = new SpeechRecognition();
+    recognition.continuous = false;
+    recognition.interimResults = false;
+    
+    // Map internal language enum to BCP 47 language tag
+    let langTag = 'en-US';
+    switch (prefs.language) {
+        case 'SPANISH': langTag = 'es-ES'; break;
+        case 'FRENCH': langTag = 'fr-FR'; break;
+        case 'GERMAN': langTag = 'de-DE'; break;
+        case 'JAPANESE': langTag = 'ja-JP'; break;
+        case 'ARABIC': langTag = 'ar-SA'; break;
+        case 'HINDI': langTag = 'hi-IN'; break;
+        // Fallback for Roman Urdu/Pashto to English or Hindi as approximate
+        case 'ROMAN_URDU': langTag = 'en-US'; break; 
+        default: langTag = 'en-US';
+    }
+    recognition.lang = langTag;
+
+    recognition.onstart = () => {
+      setIsListening(true);
+      if (prefs.sfxEnabled) playSound('send'); // Small blip to indicate start
+    };
+
+    recognition.onend = () => {
+      setIsListening(false);
+    };
+
+    recognition.onresult = (event: any) => {
+      const transcript = event.results[0][0].transcript;
+      setInputText(prev => (prev ? prev + ' ' : '') + transcript);
+    };
+
+    recognitionRef.current = recognition;
+    recognition.start();
+  };
+
+  // --- LOBBY LOGIC ---
   const handleEnterVoid = (selectedMode: ChatMode) => {
-      if (!username.trim()) return;
+      if (!prefs.username.trim()) return;
+      savePrefs(prefs); // Persist name
       
-      if (isSfxEnabled) playSound('connect');
+      if (prefs.sfxEnabled) playSound('connect');
       setIsInLobby(false);
       setMode(selectedMode);
-      usernameRef.current = username;
       
       const params = new URLSearchParams(window.location.search);
       const joinParam = params.get('join');
@@ -78,22 +141,14 @@ const App: React.FC = () => {
       if (selectedMode === 'AI') {
           handleConnectAI();
       } else {
-          // If joining via link
-          if (joinParam) {
-              initializePeer(false, joinParam);
-          } else {
-              // Creating new room
-              initializePeer(true);
-          }
+          joinParam ? initializePeer(false, joinParam) : initializePeer(true);
       }
   };
 
-  // --- P2P LOGIC ---
-
+  // --- P2P NETWORK LOGIC ---
   const initializePeer = (isHost: boolean, hostId?: string) => {
     setStatus(ConnectionStatus.SEARCHING);
     isHostRef.current = isHost;
-    
     if (peerRef.current) peerRef.current.destroy();
     connectionsRef.current.clear();
 
@@ -102,18 +157,11 @@ const App: React.FC = () => {
 
     peer.on('open', (id) => {
       setPeerId(id);
-      
-      // Add myself to participants
-      setParticipants([{ peerId: id, username: usernameRef.current, isHost }]);
+      setParticipants([{ peerId: id, username: prefs.username, isHost }]);
       
       if (isHost) {
         setStatus(ConnectionStatus.WAITING_FOR_PEER);
-        addMessage(`SECURE ROOM CREATED. ID: ${id}`, SenderType.SYSTEM);
-        
-        if (hasApiKey) {
-           initializeChatSession(mood === 'FUNNY' ? FUNNY_INSTRUCTION : SAD_INSTRUCTION)
-             .catch(() => console.log("AI init deferred"));
-        }
+        if (hasApiKey) initializeChatSession(prefs.mood, prefs.language);
       } else if (hostId) {
         addMessage(`CONNECTING TO SECURE ROOM...`, SenderType.SYSTEM);
         const conn = peer.connect(hostId);
@@ -121,20 +169,10 @@ const App: React.FC = () => {
       }
     });
 
-    peer.on('connection', (conn) => {
-      // Incoming connection (I am Host)
-      setupConnection(conn);
-    });
-
-    peer.on('error', (err) => {
-      if (isSfxEnabled) playSound('error');
-      console.error('Peer error:', err);
-      if (err.type === 'peer-unavailable') {
-         addMessage(`ERROR: Room not found or Host is offline.`, SenderType.SYSTEM);
-      }
-      if (!connectionsRef.current.size && !isHostRef.current) {
-         setStatus(ConnectionStatus.DISCONNECTED);
-      }
+    peer.on('connection', setupConnection);
+    peer.on('error', () => {
+       if (prefs.sfxEnabled) playSound('error');
+       addMessage(`CONNECTION ERROR`, SenderType.SYSTEM);
     });
   };
 
@@ -143,226 +181,165 @@ const App: React.FC = () => {
 
     conn.on('open', () => {
       setStatus(ConnectionStatus.CONNECTED);
-      if (isSfxEnabled) playSound('connect');
+      if (prefs.sfxEnabled) playSound('connect');
       
-      // HANDSHAKE: Send my details to the new peer
       conn.send({ 
           type: 'handshake', 
-          user: { peerId: peerRef.current?.id, username: usernameRef.current, isHost: isHostRef.current } 
+          user: { peerId: peerRef.current?.id, username: prefs.username, isHost: isHostRef.current } 
       });
       
-      // If I am Host, sync Mood
       if (isHostRef.current) {
-         conn.send({ type: 'mood_update', mood: moodRef.current });
+         conn.send({ type: 'sys_update', mood: prefs.mood, lang: prefs.language });
       }
     });
 
-    conn.on('data', (data: any) => {
-      handleDataPacket(data, conn.peer);
-    });
-
+    conn.on('data', (data: any) => handleDataPacket(data, conn.peer));
+    
     conn.on('close', () => {
-      addMessage(`USER DISCONNECTED.`, SenderType.SYSTEM);
       connectionsRef.current.delete(conn.peer);
-      
-      // Remove from participant list
       setParticipants(prev => prev.filter(p => p.peerId !== conn.peer));
-      
-      if (connectionsRef.current.size === 0 && !isHostRef.current) {
-        setStatus(ConnectionStatus.DISCONNECTED);
-      }
+      if (connectionsRef.current.size === 0 && !isHostRef.current) setStatus(ConnectionStatus.DISCONNECTED);
     });
   };
 
   const handleDataPacket = (data: any, senderPeerId: string) => {
       switch (data.type) {
           case 'handshake':
-              const newUser = data.user;
               setParticipants(prev => {
-                  if (prev.find(p => p.peerId === newUser.peerId)) return prev;
-                  const newList = [...prev, newUser];
-                  if (isHostRef.current) {
-                      broadcastData({ type: 'sync_participants', participants: newList });
-                  }
+                  if (prev.find(p => p.peerId === data.user.peerId)) return prev;
+                  const newList = [...prev, data.user];
+                  if (isHostRef.current) broadcastData({ type: 'sync_participants', participants: newList });
                   return newList;
               });
               break;
-            
-          case 'sync_participants':
-              setParticipants(data.participants);
-              break;
-
+          case 'sync_participants': setParticipants(data.participants); break;
           case 'message':
-              setIsTyping(false);
+              setIsRemoteTyping(false);
               addMessage(data.text, SenderType.STRANGER, data.username);
+              lastActivityTimeRef.current = Date.now(); // Update activity
               
               if (isHostRef.current) {
                   broadcastData({ type: 'message', text: data.text, username: data.username }, senderPeerId);
-                  triggerGroupAI(data.text, data.username);
+                  // Trigger smart AI analysis
+                  scheduleSmartResponse(data.text, data.username); 
               }
               break;
-
           case 'typing':
-              setIsTyping(true);
-              setTimeout(() => setIsTyping(false), 2000);
-              if (isHostRef.current) {
-                  broadcastData({ type: 'typing' }, senderPeerId);
-              }
+              setIsRemoteTyping(true);
+              lastActivityTimeRef.current = Date.now(); // Typing counts as activity
+              // If remote typing, reschedule AI to be polite (1 minute wait)
+              if (isHostRef.current) scheduleSmartResponse(null, null, true);
+              
+              setTimeout(() => setIsRemoteTyping(false), 2000);
+              if (isHostRef.current) broadcastData({ type: 'typing' }, senderPeerId);
               break;
-
-          case 'mood_update':
-              setMood(data.mood);
-              moodRef.current = data.mood;
-              addMessage(data.mood === 'FUNNY' ? "⚠️ SYSTEM: HOST ENABLED CHAOS MODE" : "⚠️ SYSTEM: HOST ENABLED SAD HOURS", SenderType.SYSTEM);
+          case 'sys_update':
+              setPrefs(p => ({ ...p, mood: data.mood, language: data.lang }));
+              addMessage(`SYSTEM: HOST SYNC [${data.mood}]`, SenderType.SYSTEM);
               break;
       }
   };
 
   const broadcastData = (data: any, excludePeerId?: string) => {
     connectionsRef.current.forEach((conn, peerId) => {
-      if (peerId !== excludePeerId && conn.open) {
-        conn.send(data);
-      }
+      if (peerId !== excludePeerId && conn.open) conn.send(data);
     });
   };
 
-  // --- AI LOGIC ---
+  // --- SMART AI BRAIN ---
+
+  // Main scheduler for the AI
+  const scheduleSmartResponse = useCallback((triggerText: string | null, senderName: string | null, isInterruptionCheck: boolean = false) => {
+    if (!hasApiKey || mode !== 'P2P' || !isHostRef.current) return;
+    
+    // Clear existing timer
+    if (aiTimeoutRef.current) clearTimeout(aiTimeoutRef.current);
+
+    // 1. Direct Trigger Check (Immediate)
+    if (triggerText) {
+        const lower = triggerText.toLowerCase();
+        const aiName = prefs.mood === 'FUNNY' ? 'lala' : 'ai';
+        const isMention = lower.includes('@') || lower.includes(aiName) || lower.includes('bot') || lower.startsWith('/');
+        
+        if (isMention) {
+             triggerGroupAI(triggerText, senderName || 'User');
+             return;
+        }
+    }
+
+    // 2. Calculated Delay based on Activity
+    // If users are typing (Interruption Check), wait 60s. If quiet, wait 20s.
+    const delay = (isInterruptionCheck || isRemoteTyping) ? 60000 : 20000;
+
+    aiTimeoutRef.current = setTimeout(() => {
+        // Double check activity before firing
+        const timeSince = Date.now() - lastActivityTimeRef.current;
+        if (timeSince >= delay) {
+            triggerGroupAI("Context Check: Everyone is silent.", "System");
+        }
+    }, delay);
+
+  }, [prefs.mood, isRemoteTyping, mode, hasApiKey]);
+
 
   const triggerGroupAI = async (triggerText: string, senderName: string) => {
-    if (!hasApiKey) return;
-    
-    const lower = triggerText.toLowerCase();
-    const isRoast = lower.startsWith('/roast');
-    const isTopic = lower.startsWith('/topic');
-    const keywords = ['lala', 'ghamgeen', 'khan', 'oye', 'bot', 'ai', 'chup', 'kaisa', 'hello', 'hi'];
-    const isMention = keywords.some(k => lower.includes(k));
-    const now = Date.now();
-    const timeSinceLastReply = now - lastAiTriggerRef.current;
-    
-    const shouldTrigger = isRoast || isTopic || isMention || (timeSinceLastReply > 20000 && Math.random() < 0.05);
+    setIsLocalTyping(true);
+    broadcastData({ type: 'typing' });
 
-    if (shouldTrigger) {
-       lastAiTriggerRef.current = now;
-       const delay = 1500 + Math.random() * 1000;
-       
-       setTimeout(async () => {
-           setIsTyping(true);
-           broadcastData({ type: 'typing' });
+    // Randomize delay for realism
+    const delay = 1000 + Math.random() * 2000;
 
-           try {
-               let promptWithContext = `${senderName}: ${triggerText}`;
-               if (isRoast) promptWithContext += " (SYSTEM COMMAND: ROAST THIS USER OR THE GROUP MERCILESSLY)";
-               else if (isTopic) promptWithContext += " (SYSTEM COMMAND: SUGGEST A WEIRD TOPIC TO DISCUSS)";
-
-               const response = await sendMessageToGemini(promptWithContext);
-               
-               setIsTyping(false);
-               const aiName = mood === 'FUNNY' ? 'Lala' : 'Ghamgeen';
-               
-               addMessage(response, SenderType.STRANGER, aiName);
-               broadcastData({ type: 'message', text: response, username: aiName });
-               
-               // TTS
-               if (isVoiceEnabled && isHostRef.current) {
-                    const audio = await generateSpeech(response, mood);
-                    if (audio) {
-                        decodeAndPlayAudio(audio);
-                        // We could broadcast audio too, but bandwidth might be high.
-                        // For now, only Host hears it or if guests enable voice locally, they might re-gen?
-                        // No, simplicity: Only local user hears Voice if enabled.
-                    }
-               }
-               
-               lastAiTriggerRef.current = Date.now();
-           } catch (e) {
-               setIsTyping(false);
-           }
-       }, delay);
-    }
+    setTimeout(async () => {
+        try {
+            // Context-Aware Prompt
+            let prompt = `${senderName}: ${triggerText}`;
+            if (senderName === 'System') prompt = "(The group has been silent for a while. Say something to revive the chat.)";
+            
+            const response = await sendMessageToGemini(prompt);
+            
+            setIsLocalTyping(false);
+            const aiName = prefs.mood === 'FUNNY' ? 'Lala' : prefs.mood === 'SAD' ? 'Ghamgeen' : 'TruthBot';
+            
+            addMessage(response, SenderType.STRANGER, aiName);
+            broadcastData({ type: 'message', text: response, username: aiName });
+            
+            lastActivityTimeRef.current = Date.now(); // AI spoke, reset clock
+            
+            if (prefs.voiceEnabled) {
+                const audio = await generateSpeech(response, prefs.mood);
+                if (audio) decodeAndPlayAudio(audio);
+            }
+        } catch (e) {
+            setIsLocalTyping(false);
+        }
+    }, delay);
   };
 
   const handleConnectAI = async () => {
     setStatus(ConnectionStatus.SEARCHING);
     resetSession();
-    
-    let step = 0;
-    const interval = setInterval(() => {
-      if (step >= 3) {
-        clearInterval(interval);
+    setTimeout(async () => {
         setStatus(ConnectionStatus.CONNECTED);
-        if (isSfxEnabled) playSound('connect');
-        
-        if (!hasApiKey) {
-           addMessage("ERROR: API KEY NOT FOUND.", SenderType.SYSTEM);
-           return;
+        if (prefs.sfxEnabled) playSound('connect');
+        if (hasApiKey) {
+            await initializeChatSession(prefs.mood, prefs.language);
+            
+            // Initial Greeting
+            setIsLocalTyping(true);
+            const greeting = await sendMessageToGemini(`(System: New user ${prefs.username} joined. Greet them.)`);
+            setIsLocalTyping(false);
+            
+            const aiName = prefs.mood === 'FUNNY' ? 'Lala' : 'Bot';
+            addMessage(greeting, SenderType.STRANGER, aiName);
         }
-
-        initializeChatSession(mood === 'FUNNY' ? FUNNY_INSTRUCTION : SAD_INSTRUCTION);
-
-        setMessages([
-          { id: '1', text: `CONNECTED TO VOID NETWORK`, sender: SenderType.SYSTEM, timestamp: new Date() },
-          { id: '2', text: mood === 'FUNNY' ? "Lala entered the chat." : "Ghamgeen entered the chat.", sender: SenderType.SYSTEM, timestamp: new Date() }
-        ]);
-        
-        setTimeout(async () => {
-           setIsTyping(true);
-           try {
-             const greetingPrompt = mood === 'FUNNY' 
-                ? `Greet the user ${usernameRef.current} loudly.`
-                : `Greet the user ${usernameRef.current} with a deep sigh.`;
-             
-             const response = await sendMessageToGemini(greetingPrompt);
-             setIsTyping(false);
-             addMessage(response, SenderType.STRANGER, mood === 'FUNNY' ? 'Lala' : 'Ghamgeen');
-             
-             if (isVoiceEnabled) {
-                 const audio = await generateSpeech(response, mood);
-                 if (audio) decodeAndPlayAudio(audio);
-             }
-           } catch (e) { setIsTyping(false); }
-        }, 1500);
-      }
-      step++;
-    }, 800);
+    }, 1500);
   };
 
-  // --- GENERAL HANDLERS ---
-
-  const handleDisconnect = () => {
-    if (isSfxEnabled) playSound('error');
-    peerRef.current?.destroy();
-    connectionsRef.current.clear();
-    setStatus(ConnectionStatus.DISCONNECTED);
-    setIsInLobby(true); 
-    setMessages([]);
-    setParticipants([]);
-    window.history.pushState({}, '', window.location.pathname);
-  };
-
-  const toggleMood = async () => {
-    if (mode === 'P2P' && !isHostRef.current) return;
-
-    if (isSfxEnabled) playSound('send');
-    const newMood = mood === 'FUNNY' ? 'SAD' : 'FUNNY';
-    setMood(newMood);
-    moodRef.current = newMood; 
-    
-    if (mode === 'P2P' && isHostRef.current) {
-        broadcastData({ type: 'mood_update', mood: newMood });
-    }
-    
-    if (status === ConnectionStatus.CONNECTED) {
-        addMessage(newMood === 'FUNNY' ? "⚠️ SYSTEM: ENTERING CHAOS MODE" : "⚠️ SYSTEM: ENTERING SAD HOURS", SenderType.SYSTEM);
-        resetSession();
-        const instruction = newMood === 'FUNNY' ? FUNNY_INSTRUCTION : SAD_INSTRUCTION;
-        if (hasApiKey) await initializeChatSession(instruction);
-    }
-  };
-
+  // --- UI HANDLERS ---
   const addMessage = (text: string, sender: SenderType, username?: string) => {
-    if (isSfxEnabled) playSound('message');
-    setMessages((prev) => [...prev, {
-      id: Date.now().toString() + Math.random().toString(),
+    if (prefs.sfxEnabled) playSound('message');
+    setMessages(p => [...p, {
+      id: Math.random().toString(36),
       text,
       sender,
       username,
@@ -371,325 +348,216 @@ const App: React.FC = () => {
     }]);
   };
 
-  const handleSendMessage = async (e?: React.FormEvent) => {
+  const handleSendMessage = (e?: React.FormEvent) => {
     e?.preventDefault();
     if (!inputText.trim()) return;
-
-    if (isSfxEnabled) playSound('send');
-    const userMsg = inputText.trim();
+    
+    if (prefs.sfxEnabled) playSound('send');
+    const text = inputText.trim();
     setInputText('');
-    addMessage(userMsg, SenderType.USER, usernameRef.current);
+    addMessage(text, SenderType.USER, prefs.username);
+    lastActivityTimeRef.current = Date.now();
 
     if (mode === 'P2P') {
-      broadcastData({ type: 'message', text: userMsg, username: usernameRef.current });
-      if (isHostRef.current) triggerGroupAI(userMsg, usernameRef.current);
-    }
-    
-    if (mode === 'AI' && status === ConnectionStatus.CONNECTED) {
-      setIsTyping(true);
-      const isRoast = userMsg.toLowerCase().startsWith('/roast');
-      
-      setTimeout(async () => {
-        try {
-          let prompt = userMsg;
-          if (isRoast) prompt += " (ROAST ME)";
-          const response = await sendMessageToGemini(prompt);
-          setIsTyping(false);
-          addMessage(response, SenderType.STRANGER, mood === 'FUNNY' ? 'Lala' : 'Ghamgeen');
-          
-          if (isVoiceEnabled) {
-              const audio = await generateSpeech(response, mood);
-              if (audio) decodeAndPlayAudio(audio);
-          }
-        } catch (error) {
-          setIsTyping(false);
-        }
-      }, 1000);
+        broadcastData({ type: 'message', text, username: prefs.username });
+        if (isHostRef.current) scheduleSmartResponse(text, prefs.username);
+    } else {
+        // Solo Mode
+        setIsLocalTyping(true);
+        setTimeout(async () => {
+            const res = await sendMessageToGemini(`${prefs.username}: ${text}`);
+            setIsLocalTyping(false);
+            const aiName = prefs.mood === 'FUNNY' ? 'Lala' : 'Bot';
+            addMessage(res, SenderType.STRANGER, aiName);
+            if (prefs.voiceEnabled) {
+                const audio = await generateSpeech(res, prefs.mood);
+                if (audio) decodeAndPlayAudio(audio);
+            }
+        }, 1000 + Math.random() * 1000);
     }
   };
 
-  // --- RENDERERS ---
+  const handleTyping = (e: React.ChangeEvent<HTMLInputElement>) => {
+    setInputText(e.target.value);
+    
+    if (typingTimeoutRef.current) clearTimeout(typingTimeoutRef.current);
+    
+    if (mode === 'P2P') {
+        broadcastData({ type: 'typing' }); // Send single ping
+        // Debounce actual logic updates if needed
+    }
+  };
 
-  const renderLobby = () => (
-      <div className="flex flex-col items-center justify-center h-full px-6 text-center animate-in fade-in zoom-in duration-500 relative">
-           <MatrixRain />
-           <div className="relative z-10 flex flex-col items-center">
-               <div className="relative mb-8">
-                  <div className="absolute -inset-1 rounded-full bg-neon-green blur opacity-20 animate-pulse"></div>
-                  <div className="relative bg-void-dark p-6 rounded-full border border-void-gray shadow-2xl">
-                    <Shield size={48} className="text-zinc-100" />
-                  </div>
-                </div>
-                
-                <h1 className="text-5xl font-bold tracking-tighter text-transparent bg-clip-text bg-gradient-to-b from-white to-zinc-500 mb-2 drop-shadow-lg">
-                  WhisperLink
-                </h1>
-                <p className="text-zinc-400 mb-8 max-w-xs font-mono text-xs tracking-widest">
-                    SECURE NEURAL UPLINK
-                </p>
+  const handleDisconnect = () => {
+    if (prefs.sfxEnabled) playSound('error');
+    peerRef.current?.destroy();
+    setIsInLobby(true);
+    setMessages([]);
+    setParticipants([]);
+    window.history.pushState({}, '', window.location.pathname);
+  };
 
-                <div className="w-full max-w-xs space-y-4">
-                    <input 
-                        type="text" 
-                        placeholder="CODENAME" 
-                        className="w-full bg-black/50 border border-void-gray text-center text-zinc-100 px-4 py-4 rounded-xl focus:border-neon-green outline-none font-mono uppercase tracking-widest transition-all backdrop-blur-sm"
-                        value={username}
-                        onChange={(e) => setUsername(e.target.value)}
-                        maxLength={12}
-                        autoFocus
-                    />
-                    
-                    <div className="grid grid-cols-2 gap-3">
-                        <button
-                            onClick={() => handleEnterVoid('AI')}
-                            disabled={!username.trim()}
-                            className="flex flex-col items-center justify-center p-4 bg-zinc-900/80 border border-zinc-800 rounded-xl hover:bg-zinc-800 hover:border-zinc-700 disabled:opacity-50 transition-all group backdrop-blur-md"
-                        >
-                            <Bot size={24} className="mb-2 text-neon-purple group-hover:scale-110 transition-transform" />
-                            <span className="text-xs font-bold text-zinc-400">SOLO (AI)</span>
-                        </button>
-                        <button
-                            onClick={() => handleEnterVoid('P2P')}
-                            disabled={!username.trim()}
-                            className="flex flex-col items-center justify-center p-4 bg-zinc-900/80 border border-zinc-800 rounded-xl hover:bg-zinc-800 hover:border-zinc-700 disabled:opacity-50 transition-all group backdrop-blur-md"
-                        >
-                            <Users size={24} className="mb-2 text-neon-green group-hover:scale-110 transition-transform" />
-                            <span className="text-xs font-bold text-zinc-400">GROUP (P2P)</span>
-                        </button>
-                    </div>
-
-                     {/* Settings Toggles in Lobby */}
-                     <div className="flex justify-center gap-4 mt-4">
-                        <button onClick={() => setIsSfxEnabled(!isSfxEnabled)} className={`p-2 rounded-full transition-colors ${isSfxEnabled ? 'text-neon-green bg-neon-green/10' : 'text-zinc-600'}`}>
-                            {isSfxEnabled ? <Volume2 size={16} /> : <VolumeX size={16} />}
-                        </button>
-                        <button onClick={() => setIsVoiceEnabled(!isVoiceEnabled)} className={`p-2 rounded-full transition-colors ${isVoiceEnabled ? 'text-neon-purple bg-neon-purple/10' : 'text-zinc-600'}`}>
-                            {isVoiceEnabled ? <Mic size={16} /> : <MicOff size={16} />}
-                        </button>
-                     </div>
-                    
-                    {!hasApiKey && <div className="text-red-500 text-[10px] bg-red-900/20 p-2 rounded">⚠️ API KEY MISSING</div>}
-                </div>
-           </div>
-      </div>
-  );
-
-  const renderLoading = () => (
-    <div className="flex flex-col items-center justify-center h-full gap-6 relative">
-      <MatrixRain />
-      <div className="z-10 flex flex-col items-center w-full">
-        {status === ConnectionStatus.WAITING_FOR_PEER ? (
-           <div className="flex flex-col items-center gap-4 max-w-md px-6 text-center bg-black/40 backdrop-blur-xl p-8 rounded-2xl border border-white/10">
-              <div className="w-16 h-16 rounded-full bg-neon-green/10 flex items-center justify-center animate-pulse">
-                  <Users size={32} className="text-neon-green" />
-              </div>
-              <h2 className="text-xl font-bold text-white">Channel Secured</h2>
-              <p className="text-zinc-400 text-sm">Waiting for agents to join...</p>
-              
-              <button 
-                onClick={() => {
-                    if (peerId) {
-                        const url = `${window.location.origin}${window.location.pathname}?join=${peerId}`;
-                        navigator.clipboard.writeText(url);
-                        setShowInviteToast(true);
-                        setTimeout(() => setShowInviteToast(false), 3000);
-                        if (isSfxEnabled) playSound('send');
-                    }
-                }}
-                className="flex items-center gap-2 bg-void-gray hover:bg-zinc-700 px-4 py-3 rounded-xl border border-zinc-600 transition-all active:scale-95 mt-2"
-              >
-                 <span className="font-mono text-xs text-neon-green tracking-wider">{peerId ? 'COPY UPLINK' : 'GENERATING...'}</span>
-                 <Copy size={14} className="text-zinc-300" />
-              </button>
-              {showInviteToast && <span className="text-xs text-neon-green animate-pulse">Link copied!</span>}
-           </div>
-        ) : (
-          <div className="text-center bg-black/40 backdrop-blur-md p-6 rounded-xl border border-white/5">
-            <div className="font-mono text-neon-green text-sm tracking-widest mb-4">
-              <EncryptionEffect 
-                text={status === ConnectionStatus.DISCONNECTED ? "UPLINK SEVERED" : "ESTABLISHING HANDSHAKE..."} 
-                duration={2000} 
-              />
-            </div>
-            <div className="w-48 h-0.5 bg-void-gray rounded-full overflow-hidden mx-auto">
-              <div className="h-full bg-neon-green animate-progress-indeterminate w-1/3 rounded-full"></div>
-            </div>
-          </div>
-        )}
-      </div>
-    </div>
-  );
-
+  // --- RENDER ---
   if (isInLobby) {
-      return (
-        <div className="h-screen w-full bg-void-black text-zinc-200 font-sans selection:bg-neon-green/30 relative overflow-hidden flex flex-col">
-            {renderLobby()}
+    return (
+      <div className="h-screen w-full bg-void-black text-zinc-200 font-sans flex flex-col items-center justify-center relative overflow-hidden">
+        <MatrixRain />
+        <div className="z-10 w-full max-w-md px-6 flex flex-col items-center gap-6 animate-in zoom-in duration-500">
+           
+           <div className="bg-void-dark p-6 rounded-3xl border border-void-gray shadow-2xl relative group">
+              <div className="absolute -inset-1 bg-neon-green/20 rounded-3xl blur opacity-0 group-hover:opacity-100 transition-opacity duration-1000"></div>
+              <Bot size={48} className="text-zinc-100 relative z-10" />
+           </div>
+
+           <div className="text-center">
+             <h1 className="text-4xl font-black text-transparent bg-clip-text bg-gradient-to-br from-white to-zinc-600">WHISPERLINK</h1>
+             <p className="text-xs font-mono text-neon-green tracking-[0.3em] mt-1">SECURE NEURAL UPLINK v4.0</p>
+           </div>
+
+           <div className="w-full space-y-3">
+              <input 
+                value={prefs.username} 
+                onChange={(e) => setPrefs({...prefs, username: e.target.value})}
+                placeholder="ENTER CODENAME"
+                maxLength={12}
+                className="w-full bg-zinc-900/80 border border-zinc-700 text-center py-4 rounded-xl text-zinc-100 font-mono tracking-widest outline-none focus:border-neon-green focus:bg-zinc-900 transition-all"
+              />
+              
+              <div className="grid grid-cols-2 gap-3">
+                 <button onClick={() => handleEnterVoid('AI')} disabled={!prefs.username} className="bg-zinc-100 text-black py-4 rounded-xl font-bold hover:scale-[1.02] active:scale-95 transition-all disabled:opacity-50">
+                    SOLO LINK
+                 </button>
+                 <button onClick={() => handleEnterVoid('P2P')} disabled={!prefs.username} className="bg-neon-green text-black py-4 rounded-xl font-bold hover:scale-[1.02] active:scale-95 transition-all disabled:opacity-50">
+                    GROUP LINK
+                 </button>
+              </div>
+           </div>
+
+           {/* Quick Settings in Lobby */}
+           <div className="flex gap-4">
+              <button onClick={() => setShowSettings(true)} className="flex items-center gap-2 text-zinc-500 hover:text-white transition-colors text-xs font-mono">
+                 <Settings size={14} /> CONFIGURE PROTOCOLS
+              </button>
+           </div>
+           
+           {!hasApiKey && <div className="text-red-500 text-[10px] bg-red-900/20 px-3 py-1 rounded">⚠️ API KEY DISCONNECTED</div>}
         </div>
-      );
+        
+        <SettingsPanel 
+          isOpen={showSettings} 
+          onClose={() => setShowSettings(false)}
+          currentLang={prefs.language}
+          setLang={(l) => updatePref('language', l)}
+          currentMood={prefs.mood}
+          setMood={(m) => updatePref('mood', m)}
+          sfx={prefs.sfxEnabled}
+          toggleSfx={() => updatePref('sfxEnabled', !prefs.sfxEnabled)}
+          voice={prefs.voiceEnabled}
+          toggleVoice={() => updatePref('voiceEnabled', !prefs.voiceEnabled)}
+        />
+      </div>
+    );
   }
 
   return (
-    <div className="h-screen w-full bg-void-black text-zinc-200 font-sans selection:bg-neon-green/30 relative overflow-hidden flex flex-col">
+    <div className="h-screen w-full bg-void-black text-zinc-200 font-sans flex flex-col relative overflow-hidden">
       <MatrixRain />
       
-      {/* HEADER */}
-      {status === ConnectionStatus.CONNECTED && (
-        <header className="absolute top-0 w-full z-20 px-4 py-3 flex justify-between items-center bg-void-black/80 backdrop-blur-md border-b border-white/5">
-          <div className="flex items-center gap-3">
-             <div onClick={() => setShowSidebar(true)} className="p-2 -ml-2 hover:bg-white/5 rounded-lg cursor-pointer transition-colors md:hidden">
-                 <Menu size={20} />
+      {/* Header */}
+      <header className="px-4 py-3 bg-void-black/80 backdrop-blur border-b border-white/5 flex justify-between items-center z-20">
+         <div className="flex items-center gap-3">
+             <div className="w-2 h-2 rounded-full bg-neon-green animate-pulse"></div>
+             <div>
+                <h2 className="font-bold text-sm tracking-wide">{mode === 'P2P' ? 'GROUP CHANNEL' : 'SECURE UPLINK'}</h2>
+                <div className="flex gap-2 text-[10px] font-mono text-zinc-500">
+                    <span>{prefs.mood}</span>
+                    <span className="text-zinc-700">|</span>
+                    <span>{prefs.language}</span>
+                </div>
              </div>
-             <div className="flex flex-col">
-                 <span className="font-bold text-sm text-white tracking-wide">{mood === 'FUNNY' ? 'LALA' : 'GHAMGEEN'}</span>
-                 <span className="font-mono text-[10px] text-neon-green flex items-center gap-1">
-                     <span className="w-1.5 h-1.5 rounded-full bg-neon-green animate-pulse"></span>
-                     ONLINE
-                 </span>
-             </div>
-          </div>
-          
-          <div className="flex gap-2 items-center">
-              {/* Settings */}
-              <div className="hidden md:flex gap-1 mr-2 border-r border-white/10 pr-2">
-                 <button onClick={() => setIsVoiceEnabled(!isVoiceEnabled)} className={`p-1.5 rounded-md transition-colors ${isVoiceEnabled ? 'text-neon-purple bg-neon-purple/10' : 'text-zinc-600 hover:text-zinc-400'}`} title="AI Voice">
-                    {isVoiceEnabled ? <Mic size={14} /> : <MicOff size={14} />}
-                 </button>
-                 <button onClick={() => setIsSfxEnabled(!isSfxEnabled)} className={`p-1.5 rounded-md transition-colors ${isSfxEnabled ? 'text-neon-green bg-neon-green/10' : 'text-zinc-600 hover:text-zinc-400'}`} title="SFX">
-                    {isSfxEnabled ? <Volume2 size={14} /> : <VolumeX size={14} />}
-                 </button>
-              </div>
-
-              {(mode === 'AI' || isHostRef.current) && (
-                   <button onClick={toggleMood} className={`p-2 rounded-full transition-colors bg-void-dark ${mood === 'FUNNY' ? 'text-neon-green hover:bg-neon-green/10' : 'text-blue-400 hover:bg-blue-400/10'}`}>
-                       {mood === 'FUNNY' ? <Smile size={18} /> : <Frown size={18} />}
-                   </button>
-              )}
-              
-              <button onClick={() => setShowSidebar(!showSidebar)} className="hidden md:flex p-2 text-zinc-400 hover:text-white transition-colors bg-void-dark rounded-full">
-                  <Users size={18} />
-              </button>
-
-              <button onClick={handleDisconnect} className="p-2 text-red-400 hover:bg-red-400/10 transition-colors bg-void-dark rounded-full">
-                <Power size={18} />
-              </button>
-          </div>
-        </header>
-      )}
-
-      {/* SIDEBAR (Participants) */}
-      <div className={`fixed inset-y-0 right-0 w-64 bg-zinc-900/95 backdrop-blur-xl border-l border-white/10 transform transition-transform duration-300 z-30 ${showSidebar ? 'translate-x-0' : 'translate-x-full'}`}>
-          <div className="p-4 flex justify-between items-center border-b border-white/5">
-              <h3 className="font-bold text-sm tracking-wider flex items-center gap-2"><Users size={14} /> AGENTS</h3>
-              <button onClick={() => setShowSidebar(false)} className="text-zinc-500 hover:text-white"><X size={18} /></button>
-          </div>
-          <div className="p-4 space-y-3">
-              {participants.map(p => (
-                  <div key={p.peerId} className="flex items-center gap-3 p-2 rounded-lg bg-white/5">
-                      <div className="w-8 h-8 rounded-full bg-gradient-to-tr from-zinc-700 to-zinc-600 flex items-center justify-center font-bold text-xs">
-                          {p.username.charAt(0).toUpperCase()}
-                      </div>
-                      <div className="flex flex-col">
-                          <span className="text-sm font-medium">{p.username} {p.peerId === peerId && '(You)'}</span>
-                          <span className="text-[10px] text-zinc-500 font-mono">{p.isHost ? 'HOST' : 'AGENT'}</span>
-                      </div>
-                  </div>
-              ))}
-              {mode === 'AI' && (
-                   <div className="flex items-center gap-3 p-2 rounded-lg bg-neon-purple/5 border border-neon-purple/20">
-                      <div className="w-8 h-8 rounded-full bg-neon-purple/20 text-neon-purple flex items-center justify-center">
-                          <Bot size={16} />
-                      </div>
-                      <div className="flex flex-col">
-                          <span className="text-sm font-medium">{mood === 'FUNNY' ? 'Lala' : 'Ghamgeen'}</span>
-                          <span className="text-[10px] text-neon-purple font-mono">AI CONSTRUCT</span>
-                      </div>
-                   </div>
-              )}
-              
-              {/* Mobile Settings in Sidebar */}
-              <div className="md:hidden mt-6 pt-6 border-t border-white/5">
-                 <h4 className="text-[10px] font-mono text-zinc-500 mb-2 uppercase">Audio Settings</h4>
-                 <div className="flex gap-2">
-                     <button onClick={() => setIsVoiceEnabled(!isVoiceEnabled)} className={`flex-1 py-2 rounded-lg text-xs font-bold border transition-colors ${isVoiceEnabled ? 'border-neon-purple text-neon-purple bg-neon-purple/5' : 'border-zinc-700 text-zinc-500'}`}>
-                        AI VOICE: {isVoiceEnabled ? 'ON' : 'OFF'}
-                     </button>
-                     <button onClick={() => setIsSfxEnabled(!isSfxEnabled)} className={`flex-1 py-2 rounded-lg text-xs font-bold border transition-colors ${isSfxEnabled ? 'border-neon-green text-neon-green bg-neon-green/5' : 'border-zinc-700 text-zinc-500'}`}>
-                        SFX: {isSfxEnabled ? 'ON' : 'OFF'}
-                     </button>
-                 </div>
-              </div>
-          </div>
-          {mode === 'P2P' && (
-              <div className="absolute bottom-4 left-4 right-4">
-                  <button 
+         </div>
+         <div className="flex gap-2">
+            <button onClick={() => setShowSettings(true)} className="p-2 bg-zinc-900 rounded-full text-zinc-400 hover:text-white transition-colors">
+                <Settings size={18} />
+            </button>
+            {mode === 'P2P' && (
+                <button 
                     onClick={() => {
                         if (peerId) {
-                            const url = `${window.location.origin}${window.location.pathname}?join=${peerId}`;
-                            navigator.clipboard.writeText(url);
+                            navigator.clipboard.writeText(`${window.location.origin}?join=${peerId}`);
+                            setShowInviteToast(true);
+                            setTimeout(() => setShowInviteToast(false), 2000);
                         }
-                    }}
-                    className="w-full py-3 bg-neon-green text-black font-bold rounded-lg text-xs flex items-center justify-center gap-2 hover:bg-green-400 transition-colors"
-                  >
-                      <UserPlus size={14} /> INVITE OTHERS
-                  </button>
-              </div>
-          )}
-      </div>
+                    }} 
+                    className="p-2 bg-zinc-900 rounded-full text-neon-green hover:bg-neon-green/10 transition-colors relative"
+                >
+                    <Users size={18} />
+                    {showInviteToast && <div className="absolute top-10 right-0 bg-neon-green text-black text-[10px] px-2 py-1 rounded font-bold whitespace-nowrap">LINK COPIED</div>}
+                </button>
+            )}
+            <button onClick={handleDisconnect} className="p-2 bg-red-500/10 text-red-500 rounded-full hover:bg-red-500 hover:text-white transition-colors">
+                <Power size={18} />
+            </button>
+         </div>
+      </header>
 
-      {/* MAIN CHAT AREA */}
-      <div className="flex-1 relative overflow-hidden flex flex-col z-10">
-         {(status === ConnectionStatus.SEARCHING || status === ConnectionStatus.WAITING_FOR_PEER || status === ConnectionStatus.DISCONNECTED) ? renderLoading() : (
-             <div className="flex flex-col h-full pt-16">
-              <div className="flex-1 overflow-y-auto px-4 scroll-smooth">
-                <div className="max-w-3xl mx-auto flex flex-col justify-end min-h-full pb-4">
-                  {messages.map((msg) => (
-                    <ChatMessage key={msg.id} message={msg} />
-                  ))}
-                  
-                  {isTyping && (
-                     <div className="flex w-full mb-4 justify-start animate-pulse opacity-50">
-                      <div className="flex flex-row gap-3 items-center">
-                         <div className="w-8 h-8 rounded-full bg-void-dark flex items-center justify-center shrink-0 border border-void-gray">
-                            <span className="text-xs">...</span>
-                         </div>
-                         <span className="text-xs text-zinc-500 font-mono">Construct is typing...</span>
-                      </div>
-                    </div>
-                  )}
-                  <div ref={messagesEndRef} />
-                </div>
-              </div>
-
-              {/* INPUT */}
-              <div className="p-4 bg-void-black/80 backdrop-blur-xl border-t border-white/5 sticky bottom-0 z-10">
-                <form onSubmit={handleSendMessage} className="max-w-3xl mx-auto flex gap-3 items-end">
-                  <div className="relative flex-1 bg-zinc-900/50 rounded-2xl border border-white/10 focus-within:border-zinc-500 focus-within:bg-zinc-900 transition-all">
-                    <input
-                      type="text"
-                      value={inputText}
-                      onChange={(e) => {
-                          setInputText(e.target.value);
-                          if (mode === 'P2P' && connectionsRef.current) {
-                              broadcastData({ type: 'typing' });
-                          }
-                      }}
-                      placeholder={`Message ${mode === 'P2P' ? 'Group' : 'Void'}...`}
-                      className="w-full bg-transparent text-zinc-200 px-4 py-3 outline-none placeholder:text-zinc-600 font-sans"
-                      autoFocus
-                    />
-                  </div>
-                  <button
-                    type="submit"
-                    disabled={!inputText.trim()}
-                    className={`p-3 text-black rounded-full hover:scale-105 disabled:opacity-50 disabled:scale-100 transition-all shadow-lg ${mood === 'FUNNY' ? 'bg-neon-green shadow-neon-green/20' : 'bg-blue-400 shadow-blue-400/20'}`}
-                  >
-                    <Send size={20} className={inputText.trim() ? "translate-x-0.5" : ""} />
-                  </button>
-                </form>
-              </div>
-            </div>
+      {/* Messages Area */}
+      <div className="flex-1 overflow-y-auto px-4 pt-4 pb-20 scroll-smooth z-10">
+         {status !== ConnectionStatus.CONNECTED && (
+             <div className="flex flex-col items-center justify-center h-full text-zinc-500 font-mono text-xs gap-4">
+                 <div className="w-8 h-8 border-2 border-neon-green border-t-transparent rounded-full animate-spin"></div>
+                 <EncryptionEffect text="ESTABLISHING CONNECTION..." />
+             </div>
          )}
+         
+         <div className="max-w-2xl mx-auto flex flex-col justify-end min-h-full">
+            {messages.map(msg => <ChatMessage key={msg.id} message={msg} />)}
+            {(isLocalTyping || isRemoteTyping) && (
+                <div className="text-[10px] text-zinc-600 font-mono animate-pulse ml-4 mb-4">
+                    {isRemoteTyping ? 'Signal detected...' : 'Computing...'}
+                </div>
+            )}
+            <div ref={messagesEndRef} />
+         </div>
       </div>
+
+      {/* Input Area */}
+      <div className="bg-void-black/90 backdrop-blur-xl border-t border-white/10 p-4 sticky bottom-0 z-20">
+         <form onSubmit={handleSendMessage} className="max-w-2xl mx-auto flex gap-3 items-center">
+            
+            {/* Mic Button */}
+            <button 
+                type="button"
+                onClick={toggleListening}
+                className={`p-3 rounded-xl transition-all ${isListening ? 'bg-red-500/20 text-red-500 animate-pulse' : 'bg-zinc-900 text-zinc-400 hover:text-white'}`}
+            >
+                {isListening ? <Loader2 size={20} className="animate-spin" /> : <Mic size={20} />}
+            </button>
+
+            <input 
+                value={inputText}
+                onChange={handleTyping}
+                placeholder={isListening ? "Listening..." : "Broadcast message..."}
+                className="flex-1 bg-zinc-900 border border-zinc-800 rounded-xl px-4 py-3 text-sm text-zinc-100 outline-none focus:border-zinc-600 transition-all placeholder:text-zinc-600"
+            />
+            <button disabled={!inputText.trim()} type="submit" className="bg-neon-green text-black p-3 rounded-xl hover:scale-105 disabled:opacity-50 disabled:scale-100 transition-all">
+                <Send size={20} />
+            </button>
+         </form>
+      </div>
+
+      <SettingsPanel 
+          isOpen={showSettings} 
+          onClose={() => setShowSettings(false)}
+          currentLang={prefs.language}
+          setLang={(l) => updatePref('language', l)}
+          currentMood={prefs.mood}
+          setMood={(m) => updatePref('mood', m)}
+          sfx={prefs.sfxEnabled}
+          toggleSfx={() => updatePref('sfxEnabled', !prefs.sfxEnabled)}
+          voice={prefs.voiceEnabled}
+          toggleVoice={() => updatePref('voiceEnabled', !prefs.voiceEnabled)}
+      />
     </div>
   );
 };
