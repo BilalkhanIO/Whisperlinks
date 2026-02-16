@@ -1,114 +1,72 @@
 import React from 'react';
 import { Message, SenderType } from '../types';
 import { EncryptionEffect } from './EncryptionEffect';
-import { User, Globe, ShieldCheck, CheckCircle, XCircle, AlertTriangle, HelpCircle } from 'lucide-react';
+import { User, Globe, ShieldCheck, Bot } from 'lucide-react';
 
 interface ChatMessageProps {
   message: Message;
 }
 
-const parseFactCheckVerdict = (text: string): { verdict: string; content: string } | null => {
-  const verdictMatch = text.match(/^\[(VERIFIED|FALSE|UNVERIFIED|MISLEADING)\]\s*/i);
-  if (verdictMatch) {
-    return {
-      verdict: verdictMatch[1].toUpperCase(),
-      content: text.slice(verdictMatch[0].length),
-    };
-  }
-  return null;
-};
-
-const VERDICT_CONFIG: Record<string, { icon: React.ReactNode; bg: string; text: string; label: string }> = {
-  VERIFIED: { icon: <CheckCircle size={13} />, bg: 'bg-emerald-500/15 border-emerald-500/30', text: 'text-emerald-400', label: '✅ Verified' },
-  FALSE: { icon: <XCircle size={13} />, bg: 'bg-red-500/15 border-red-500/30', text: 'text-red-400', label: '❌ False' },
-  UNVERIFIED: { icon: <HelpCircle size={13} />, bg: 'bg-amber-500/15 border-amber-500/30', text: 'text-amber-400', label: '⚠️ Unverified' },
-  MISLEADING: { icon: <AlertTriangle size={13} />, bg: 'bg-orange-500/15 border-orange-500/30', text: 'text-orange-400', label: '⚡ Misleading' },
-};
-
-const VerdictBadge: React.FC<{ verdict: string }> = React.memo(({ verdict }) => {
-  const c = VERDICT_CONFIG[verdict] || VERDICT_CONFIG.UNVERIFIED;
-  return (
-    <div className={`inline-flex items-center gap-1.5 px-2.5 py-1 rounded-full text-[11px] font-bold border ${c.bg} ${c.text} mb-2`}>
-      {c.icon}
-      <span>{c.label}</span>
-    </div>
-  );
-});
-VerdictBadge.displayName = 'VerdictBadge';
-
-export const ChatMessage: React.FC<ChatMessageProps> = React.memo(({ message }) => {
+export const ChatMessage: React.FC<ChatMessageProps> = ({ message }) => {
   const isUser = message.sender === SenderType.USER;
   const isSystem = message.sender === SenderType.SYSTEM;
+  const isStranger = message.sender === SenderType.STRANGER;
 
   if (isSystem) {
     return (
-      <div className="flex justify-center my-2.5 animate-fade-in">
-        <div className="bg-void-dark/80 border border-void-gray/50 text-[10px] font-mono text-zinc-500 px-3 py-1.5 rounded-full flex items-center gap-1.5 max-w-[90%] text-center backdrop-blur-sm">
-          <ShieldCheck size={10} className="text-neon-green/60 shrink-0" />
-          <span className="uppercase tracking-wider truncate">{message.text}</span>
+      <div className="flex justify-center my-4 opacity-75">
+        <div className="bg-void-dark border border-void-gray text-xs font-mono text-neon-green/80 px-3 py-1 rounded-full flex items-center gap-2 shadow-[0_0_10px_rgba(34,197,94,0.1)]">
+          <ShieldCheck size={12} />
+          <span className="uppercase tracking-wider">{message.text}</span>
         </div>
       </div>
     );
   }
 
-  const factCheck = !isUser ? parseFactCheckVerdict(message.text) : null;
-  const displayText = factCheck ? factCheck.content : message.text;
+  // Determine Avatar
+  const renderAvatar = () => {
+    if (isUser) return <div className="w-8 h-8 rounded-full bg-zinc-800 text-zinc-400 flex items-center justify-center shrink-0 border border-zinc-700"><User size={16} /></div>;
+    // Distinguish AI from Human Peers visually if possible, though 'STRANGER' covers both in types currently.
+    // In this app logic, STRANGER is usually AI in AI mode, or Human in P2P. 
+    // We can check if username is "Lala" or "Ghamgeen" or "AI" roughly, but let's keep it generic "Globe" for peer/AI mystery.
+    return <div className="w-8 h-8 rounded-full bg-neon-purple/20 text-neon-purple flex items-center justify-center shrink-0 border border-neon-purple/30"><Globe size={16} /></div>;
+  };
 
   return (
-    <div className={`flex w-full mb-2.5 animate-msg-in ${isUser ? 'justify-end' : 'justify-start'}`}>
-      <div className={`max-w-[85%] md:max-w-[70%] flex gap-2 ${isUser ? 'flex-row-reverse' : 'flex-row'}`}>
-
-        {/* Avatar */}
-        {isUser ? (
-          <div className="w-7 h-7 rounded-full bg-zinc-800/80 text-zinc-500 flex items-center justify-center shrink-0 border border-zinc-700/50 text-[10px] font-bold mt-0.5">
-            {(message.username || 'U').charAt(0).toUpperCase()}
-          </div>
-        ) : (
-          <div className="w-7 h-7 rounded-full bg-neon-purple/15 text-neon-purple flex items-center justify-center shrink-0 border border-neon-purple/20 mt-0.5">
-            <Globe size={13} />
-          </div>
-        )}
+    <div className={`flex w-full mb-4 ${isUser ? 'justify-end' : 'justify-start'}`}>
+      <div className={`max-w-[85%] md:max-w-[70%] flex gap-3 ${isUser ? 'flex-row-reverse' : 'flex-row'}`}>
+        
+        {renderAvatar()}
 
         <div className="flex flex-col min-w-0">
-          {/* Username */}
-          {!isUser && message.username && (
-            <span className="text-[9px] text-zinc-600 ml-1 mb-0.5 font-mono tracking-wide uppercase">
-              {message.username}
-            </span>
-          )}
+            {/* Username Label */}
+            {!isUser && message.username && (
+                <span className="text-[10px] text-zinc-500 ml-1 mb-1 font-mono tracking-wide uppercase">
+                    {message.username}
+                </span>
+            )}
 
-          {/* Bubble */}
-          <div className={`
-            relative px-3.5 py-2.5 text-[13px] leading-relaxed backdrop-blur-sm
-            ${isUser
-              ? 'bg-zinc-800/90 text-zinc-100 rounded-2xl rounded-tr-md border border-zinc-700/50'
-              : factCheck
-                ? 'bg-void-dark/90 border border-amber-500/25 text-zinc-300 rounded-2xl rounded-tl-md shadow-[0_0_20px_rgba(251,191,36,0.05)]'
-                : 'bg-void-dark/90 border border-void-gray/50 text-zinc-300 rounded-2xl rounded-tl-md'}
-          `}>
-            {factCheck && <VerdictBadge verdict={factCheck.verdict} />}
-
-            {message.isEncrypted && !message.isStreaming ? (
-              <div className="font-mono text-neon-green text-xs tracking-widest opacity-80">
-                <EncryptionEffect text={displayText} duration={800} />
+            {/* Bubble */}
+            <div className={`
+              relative px-4 py-3 rounded-2xl text-sm leading-relaxed shadow-lg backdrop-blur-sm
+              ${isUser 
+                ? 'bg-zinc-800 text-zinc-100 rounded-tr-none border border-zinc-700' 
+                : 'bg-void-dark border border-void-gray text-zinc-300 rounded-tl-none'}
+            `}>
+              {message.isEncrypted ? (
+                <div className="font-mono text-neon-green text-xs tracking-widest opacity-80">
+                  <EncryptionEffect text={message.text} duration={1500} />
+                </div>
+              ) : (
+                <span className="whitespace-pre-wrap">{message.text}</span>
+              )}
+              
+              <div className={`text-[10px] mt-1 opacity-40 flex gap-1 ${isUser ? 'justify-end' : 'justify-start'}`}>
+                <span>{message.timestamp.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}</span>
               </div>
-            ) : (
-              <span className="whitespace-pre-wrap break-words">{displayText}</span>
-            )}
-
-            {/* Streaming cursor */}
-            {message.isStreaming && (
-              <span className="inline-block w-0.5 h-4 bg-neon-green ml-0.5 animate-blink align-text-bottom" />
-            )}
-
-            <div className={`text-[9px] mt-1 opacity-30 ${isUser ? 'text-right' : 'text-left'}`}>
-              {message.timestamp.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}
             </div>
-          </div>
         </div>
       </div>
     </div>
   );
-});
-
-ChatMessage.displayName = 'ChatMessage';
+};

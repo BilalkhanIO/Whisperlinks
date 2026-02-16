@@ -1,125 +1,92 @@
-import { GoogleGenAI, Chat } from "@google/genai";
-import { buildInstruction } from "../constants";
-import { ChatMood, ChatLanguage } from "../types";
+
+import { GoogleGenAI, Chat, Modality } from "@google/genai";
+import { FUNNY_INSTRUCTION } from "../constants";
 
 let chatSession: Chat | null = null;
 let genAI: GoogleGenAI | null = null;
-let currentInstruction: string = '';
-let currentMood: ChatMood = 'FUNNY';
-let currentLanguage: ChatLanguage = 'EN';
-let currentUsername: string = '';
 
-const getGenAI = (): GoogleGenAI => {
-  if (!process.env.API_KEY) throw new Error("API Key is missing");
-  if (!genAI) {
-    genAI = new GoogleGenAI({ apiKey: process.env.API_KEY });
-  }
-  return genAI;
-};
+// Initialize the API client
+const getClient = () => {
+    if (!genAI && process.env.API_KEY) {
+        genAI = new GoogleGenAI({ apiKey: process.env.API_KEY });
+    }
+    return genAI;
+}
 
-export const initializeChatSession = async (
-  instruction: string,
-  mood?: ChatMood,
-  language?: ChatLanguage,
-  username?: string
-): Promise<void> => {
-  const ai = getGenAI();
-
-  if (mood) currentMood = mood;
-  if (language) currentLanguage = language;
-  if (username) currentUsername = username;
-
-  currentInstruction = (mood && language && username)
-    ? buildInstruction(mood, language, username)
-    : instruction;
-
-  chatSession = ai.chats.create({
-    model: "gemini-1.5-flash",
+export const initializeChatSession = async (instruction: string = FUNNY_INSTRUCTION): Promise<void> => {
+  const client = getClient();
+  if (!client) throw new Error("API Key is missing");
+  
+  chatSession = client.chats.create({
+    model: "gemini-3-flash-preview",
     config: {
-      systemInstruction: currentInstruction,
-      temperature: currentMood === 'FACTCHECK' ? 0.2 : currentMood === 'CHILL' ? 0.7 : 1.1,
+      systemInstruction: instruction,
+      temperature: 1.1, 
       topP: 0.95,
       topK: 64,
     },
   });
 };
 
-/**
- * Primary: try streaming first, fall back to standard if streaming fails.
- * onChunk receives accumulated text for real-time display.
- */
-export const sendMessageStreaming = async (
-  message: string,
-  onChunk: (accumulated: string) => void
-): Promise<string> => {
-  if (!chatSession) {
-    await initializeChatSession(currentInstruction || '', currentMood, currentLanguage, currentUsername);
-  }
-  if (!chatSession) throw new Error("Failed to initialize chat session");
-
-  try {
-    const stream = await chatSession.sendMessageStream({ message });
-    let accumulated = '';
-
-    for await (const chunk of stream) {
-      const text = chunk.text || '';
-      if (text) {
-        accumulated += text;
-        onChunk(accumulated);
-      }
-    }
-
-    if (!accumulated) {
-      // Stream returned empty — fallback
-      const fallback = await sendMessageToGemini(message);
-      onChunk(fallback);
-      return fallback;
-    }
-
-    return accumulated;
-  } catch (error) {
-    console.warn("Streaming failed, falling back to standard:", error);
-    try {
-      const fallback = await sendMessageToGemini(message);
-      onChunk(fallback);
-      return fallback;
-    } catch (fallbackError) {
-      const errMsg = "⚡ Connection hiccup... try again!";
-      onChunk(errMsg);
-      return errMsg;
-    }
-  }
-};
-
-/**
- * Standard (non-streaming) message send — always works as reliable fallback
- */
 export const sendMessageToGemini = async (message: string): Promise<string> => {
   if (!chatSession) {
-    await initializeChatSession(currentInstruction || '', currentMood, currentLanguage, currentUsername);
+    await initializeChatSession();
   }
-  if (!chatSession) throw new Error("Failed to initialize chat session");
+
+  if (!chatSession) {
+    throw new Error("Failed to initialize chat session");
+  }
 
   try {
     const result = await chatSession.sendMessage({ message });
     return result.text || "...";
   } catch (error) {
     console.error("Gemini API Error:", error);
-    // Retry once with fresh session
     try {
-      await initializeChatSession(currentInstruction, currentMood, currentLanguage, currentUsername);
-      if (chatSession) {
-        const retryResult = await chatSession.sendMessage({ message });
-        return retryResult.text || "...";
-      }
-    } catch (retryError) {
-      console.error("Retry failed:", retryError);
+        await initializeChatSession(); 
+        if(chatSession) {
+             const retryResult = await chatSession.sendMessage({ message });
+             return retryResult.text || "...";
+        }
+    } catch(retryError) {
+        console.error("Retry failed", retryError);
     }
-    return "⚡ Connection issue... try again!";
+    return "Oye, internet chala gaya lagta hai! (Connection Error)";
   }
 };
 
-export const isSessionReady = (): boolean => !!chatSession;
+export const generateSpeech = async (text: string, mood: 'FUNNY' | 'SAD'): Promise<string | null> => {
+  const client = getClient();
+  if (!client) return null;
+
+  try {
+    // 'Kore' is energetic (good for Lala), 'Fenrir' is deep (good for Ghamgeen)
+    const voiceName = mood === 'FUNNY' ? 'Kore' : 'Fenrir'; 
+    
+    // Truncate text if too long to save latency/quota, as TTS is just for effect
+    const cleanText = text.replace(/[\u{1F600}-\u{1F64F}]/gu, "") // Remove emojis for TTS
+                          .substring(0, 300); 
+
+    const response = await client.models.generateContent({
+      model: "gemini-2.5-flash-preview-tts",
+      contents: { parts: [{ text: cleanText }] },
+      config: {
+        responseModalities: [Modality.AUDIO], // Use the Modality enum
+        speechConfig: {
+          voiceConfig: {
+            prebuiltVoiceConfig: { voiceName },
+          },
+        },
+      },
+    });
+
+    // Extract base64 audio
+    return response.candidates?.[0]?.content?.parts?.[0]?.inlineData?.data || null;
+  } catch (e) {
+    console.error("TTS Generation Error", e);
+    return null;
+  }
+};
 
 export const resetSession = () => {
   chatSession = null;
