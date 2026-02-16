@@ -5,6 +5,9 @@ import { ChatMood, ChatLanguage } from "../types";
 let chatSession: Chat | null = null;
 let genAI: GoogleGenAI | null = null;
 let currentInstruction: string = '';
+let currentMood: ChatMood = 'FUNNY';
+let currentLanguage: ChatLanguage = 'EN';
+let currentUsername: string = '';
 
 const getGenAI = (): GoogleGenAI => {
   if (!process.env.API_KEY) throw new Error("API Key is missing");
@@ -22,6 +25,10 @@ export const initializeChatSession = async (
 ): Promise<void> => {
   const ai = getGenAI();
 
+  if (mood) currentMood = mood;
+  if (language) currentLanguage = language;
+  if (username) currentUsername = username;
+
   currentInstruction = (mood && language && username)
     ? buildInstruction(mood, language, username)
     : instruction;
@@ -30,7 +37,7 @@ export const initializeChatSession = async (
     model: "gemini-2.5-flash-preview-04-17",
     config: {
       systemInstruction: currentInstruction,
-      temperature: mood === 'FACTCHECK' ? 0.2 : mood === 'CHILL' ? 0.7 : 1.1,
+      temperature: currentMood === 'FACTCHECK' ? 0.2 : currentMood === 'CHILL' ? 0.7 : 1.1,
       topP: 0.95,
       topK: 64,
     },
@@ -38,15 +45,15 @@ export const initializeChatSession = async (
 };
 
 /**
- * Send a message and stream the response back token-by-token
- * onChunk is called with accumulated text for real-time display
+ * Primary: try streaming first, fall back to standard if streaming fails.
+ * onChunk receives accumulated text for real-time display.
  */
 export const sendMessageStreaming = async (
   message: string,
   onChunk: (accumulated: string) => void
 ): Promise<string> => {
   if (!chatSession) {
-    await initializeChatSession(currentInstruction || '');
+    await initializeChatSession(currentInstruction || '', currentMood, currentLanguage, currentUsername);
   }
   if (!chatSession) throw new Error("Failed to initialize chat session");
 
@@ -56,28 +63,40 @@ export const sendMessageStreaming = async (
 
     for await (const chunk of stream) {
       const text = chunk.text || '';
-      accumulated += text;
-      onChunk(accumulated);
+      if (text) {
+        accumulated += text;
+        onChunk(accumulated);
+      }
     }
 
-    return accumulated || "...";
+    if (!accumulated) {
+      // Stream returned empty — fallback
+      const fallback = await sendMessageToGemini(message);
+      onChunk(fallback);
+      return fallback;
+    }
+
+    return accumulated;
   } catch (error) {
-    console.error("Gemini Stream Error:", error);
-    // Fallback to non-streaming
+    console.warn("Streaming failed, falling back to standard:", error);
     try {
-      return await sendMessageToGemini(message);
+      const fallback = await sendMessageToGemini(message);
+      onChunk(fallback);
+      return fallback;
     } catch (fallbackError) {
-      return "Connection hiccup... try again! ⚡";
+      const errMsg = "⚡ Connection hiccup... try again!";
+      onChunk(errMsg);
+      return errMsg;
     }
   }
 };
 
 /**
- * Send a standard (non-streaming) message
+ * Standard (non-streaming) message send — always works as reliable fallback
  */
 export const sendMessageToGemini = async (message: string): Promise<string> => {
   if (!chatSession) {
-    await initializeChatSession(currentInstruction || '');
+    await initializeChatSession(currentInstruction || '', currentMood, currentLanguage, currentUsername);
   }
   if (!chatSession) throw new Error("Failed to initialize chat session");
 
@@ -86,18 +105,21 @@ export const sendMessageToGemini = async (message: string): Promise<string> => {
     return result.text || "...";
   } catch (error) {
     console.error("Gemini API Error:", error);
+    // Retry once with fresh session
     try {
-      await initializeChatSession(currentInstruction);
+      await initializeChatSession(currentInstruction, currentMood, currentLanguage, currentUsername);
       if (chatSession) {
         const retryResult = await chatSession.sendMessage({ message });
         return retryResult.text || "...";
       }
     } catch (retryError) {
-      console.error("Retry failed", retryError);
+      console.error("Retry failed:", retryError);
     }
-    return "Connection issue... try again! ⚡";
+    return "⚡ Connection issue... try again!";
   }
 };
+
+export const isSessionReady = (): boolean => !!chatSession;
 
 export const resetSession = () => {
   chatSession = null;

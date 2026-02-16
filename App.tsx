@@ -8,7 +8,7 @@ import { TypingBubble } from './components/TypingBubble';
 import { MoodPicker } from './components/MoodPicker';
 import { LanguagePicker } from './components/LanguagePicker';
 import { QuickCommands } from './components/QuickCommands';
-import { getMoodConfig, getLanguageConfig, buildInstruction } from './constants';
+import { getMoodConfig, getLanguageConfig } from './constants';
 import { Send, Power, Terminal, Shield, UserPlus, Copy, Users, Bot, Sparkles, Menu, X } from 'lucide-react';
 
 // ─── SOUND FX (tiny inline beeps) ────────────────────────────
@@ -65,6 +65,10 @@ const App: React.FC = () => {
   const lastAiTriggerRef = useRef<number>(0);
   const typingDebounceRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const streamingMsgIdRef = useRef<string | null>(null);
+  const groupInactivityRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const groupPeriodicRef = useRef<ReturnType<typeof setInterval> | null>(null);
+  const lastGroupMsgRef = useRef<{ text: string; sender: string }>({ text: '', sender: '' });
+  const aiRespondingRef = useRef<boolean>(false);
 
   const hasApiKey = !!process.env.API_KEY;
   const moodConfig = useMemo(() => getMoodConfig(mood), [mood]);
@@ -188,6 +192,9 @@ const App: React.FC = () => {
       setStatus(ConnectionStatus.CONNECTED);
       if (soundEnabled) playSound('connect');
 
+      // Start group AI timers when P2P connects
+      if (hasApiKey && isHostRef.current) startGroupTimers();
+
       conn.send({
         type: 'handshake',
         user: { peerId: peerRef.current?.id, username: usernameRef.current, isHost: isHostRef.current }
@@ -275,56 +282,119 @@ const App: React.FC = () => {
   /**
    * AI MESSAGE MEMORY:
    * - The Gemini Chat session maintains full conversation history.
-   * - Every message sent to the AI is prefixed with "Username: message"
+   * - Every message sent to AI is prefixed with "Username: message"
    *   so the AI always knows WHO said what.
    * - In P2P mode, all group messages flow through the AI with attribution.
-   * - This creates a persistent conversational memory per session.
+   *
+   * GROUP AI TRIGGER RULES:
+   * 1. ALWAYS trigger on commands (/roast, /fact, /topic)
+   * 2. ALWAYS trigger on mentions (bot keywords)
+   * 3. Auto-jump after 30s of group SILENCE (no new messages)
+   * 4. Auto-jump every 60s even if group is active
    */
 
-  const triggerGroupAI = async (triggerText: string, senderName: string) => {
+  const stopGroupTimers = () => {
+    if (groupInactivityRef.current) { clearTimeout(groupInactivityRef.current); groupInactivityRef.current = null; }
+    if (groupPeriodicRef.current) { clearInterval(groupPeriodicRef.current); groupPeriodicRef.current = null; }
+  };
+
+  const startGroupTimers = () => {
+    stopGroupTimers();
+
+    // 30s inactivity timer — if nobody talks for 30s, AI jumps in
+    groupInactivityRef.current = setTimeout(() => {
+      if (!aiRespondingRef.current) {
+        fireGroupAI(lastGroupMsgRef.current.text || 'The group has been quiet...', lastGroupMsgRef.current.sender || 'system', true);
+      }
+    }, 30000);
+
+    // 60s periodic timer — AI jumps in every 60s regardless
+    groupPeriodicRef.current = setInterval(() => {
+      if (!aiRespondingRef.current) {
+        fireGroupAI('', '', true);
+      }
+    }, 60000);
+  };
+
+  // Clean up timers on unmount or mode change
+  useEffect(() => {
+    return () => stopGroupTimers();
+  }, []);
+
+  /** Actually fire an AI response in group mode */
+  const fireGroupAI = async (triggerText: string, senderName: string, isAutoJump: boolean = false) => {
+    if (!hasApiKey || aiRespondingRef.current) return;
+    aiRespondingRef.current = true;
+
+    const delay = isAutoJump ? 500 : (400 + Math.random() * 400);
+
+    setTimeout(async () => {
+      setIsTyping(true);
+      broadcastData({ type: 'typing' });
+
+      try {
+        let prompt: string;
+
+        if (isAutoJump && !triggerText) {
+          // Periodic jump-in — AI comments on the conversation naturally
+          prompt = `[SYSTEM: The group has been chatting. Jump into the conversation naturally with a comment, joke, or observation. Be brief.]`;
+        } else {
+          prompt = `${senderName}: ${triggerText}`;
+        }
+
+        const lower = (triggerText || '').toLowerCase();
+        if (lower.startsWith('/roast')) prompt += " [SYSTEM: ROAST THIS USER MERCILESSLY]";
+        else if (lower.startsWith('/topic')) prompt += " [SYSTEM: SUGGEST A WILD TOPIC]";
+        else if (lower.startsWith('/fact')) prompt += " [SYSTEM: FACT-CHECK THIS. Start with [VERIFIED], [FALSE], [UNVERIFIED], or [MISLEADING]]";
+
+        const response = await sendMessageToGemini(prompt);
+
+        setIsTyping(false);
+        const persona = getMoodConfig(moodRef.current).persona;
+        addMessage(response, SenderType.STRANGER, persona);
+        broadcastData({ type: 'message', text: response, username: persona });
+        if (soundEnabled) playSound('receive');
+
+        lastAiTriggerRef.current = Date.now();
+      } catch (e) {
+        setIsTyping(false);
+      } finally {
+        aiRespondingRef.current = false;
+        // Reset the inactivity timer after AI responds
+        if (groupInactivityRef.current) clearTimeout(groupInactivityRef.current);
+        groupInactivityRef.current = setTimeout(() => {
+          if (!aiRespondingRef.current) {
+            fireGroupAI('', '', true);
+          }
+        }, 30000);
+      }
+    }, delay);
+  };
+
+  /** Decide if group AI should trigger based on message content */
+  const triggerGroupAI = (triggerText: string, senderName: string) => {
     if (!hasApiKey) return;
 
-    const lower = triggerText.toLowerCase();
-    const isRoast = lower.startsWith('/roast');
-    const isTopic = lower.startsWith('/topic');
-    const isFact = lower.startsWith('/fact');
+    // Store last message for inactivity context
+    lastGroupMsgRef.current = { text: triggerText, sender: senderName };
 
-    const keywords = ['lala', 'ghamgeen', 'savage', 'zen', 'factbot', 'khan', 'oye', 'bot', 'ai', 'chup', 'kaisa', 'hello', 'hi', 'bhai', 'yaara'];
+    // Reset the 30s inactivity timer on every new message
+    if (groupInactivityRef.current) clearTimeout(groupInactivityRef.current);
+    groupInactivityRef.current = setTimeout(() => {
+      if (!aiRespondingRef.current) {
+        fireGroupAI(triggerText, senderName, true);
+      }
+    }, 30000);
+
+    const lower = triggerText.toLowerCase();
+    const isCommand = lower.startsWith('/roast') || lower.startsWith('/topic') || lower.startsWith('/fact');
+
+    const keywords = ['lala', 'ghamgeen', 'savage', 'zen', 'factbot', 'khan', 'oye', 'bot', 'ai', 'chup', 'kaisa', 'hello', 'hi', 'bhai', 'yaara', 'bro'];
     const isMention = keywords.some(k => lower.includes(k));
 
-    const now = Date.now();
-    const timeSinceLastReply = now - lastAiTriggerRef.current;
-    const shouldTrigger = isRoast || isTopic || isFact || isMention || (timeSinceLastReply > 15000 && Math.random() < 0.08);
-
-    if (shouldTrigger) {
-      lastAiTriggerRef.current = now;
-      const delay = 600 + Math.random() * 600;
-
-      setTimeout(async () => {
-        setIsTyping(true);
-        broadcastData({ type: 'typing' });
-
-        try {
-          // Always send with attribution so AI remembers who said what
-          let prompt = `${senderName}: ${triggerText}`;
-
-          if (isRoast) prompt += " [SYSTEM: ROAST THIS USER MERCILESSLY]";
-          else if (isTopic) prompt += " [SYSTEM: SUGGEST A WILD TOPIC]";
-          else if (isFact) prompt += " [SYSTEM: FACT-CHECK THIS. Start with [VERIFIED], [FALSE], [UNVERIFIED], or [MISLEADING]]";
-
-          const response = await sendMessageToGemini(prompt);
-
-          setIsTyping(false);
-          const persona = getMoodConfig(moodRef.current).persona;
-          addMessage(response, SenderType.STRANGER, persona);
-          broadcastData({ type: 'message', text: response, username: persona });
-          if (soundEnabled) playSound('receive');
-
-          lastAiTriggerRef.current = Date.now();
-        } catch (e) {
-          setIsTyping(false);
-        }
-      }, delay);
+    // Trigger immediately on commands or mentions
+    if (isCommand || isMention) {
+      fireGroupAI(triggerText, senderName);
     }
   };
 
@@ -364,7 +434,7 @@ const App: React.FC = () => {
 
             setIsTyping(false);
 
-            const finalText = await sendMessageStreaming(greetingPrompt, (chunk) => {
+            await sendMessageStreaming(greetingPrompt, (chunk) => {
               upsertStreamingMessage(streamId, chunk, SenderType.STRANGER, mc.persona);
             });
 
@@ -384,6 +454,7 @@ const App: React.FC = () => {
   const handleDisconnect = () => {
     peerRef.current?.destroy();
     connectionsRef.current.clear();
+    stopGroupTimers();
     setStatus(ConnectionStatus.DISCONNECTED);
     setIsInLobby(true);
     setMessages([]);
@@ -462,33 +533,32 @@ const App: React.FC = () => {
         return;
       }
 
+      // === SOLO AI: RESPOND INSTANTLY TO EVERY MESSAGE ===
+      // No delay, no mention check — this is a 1-on-1 conversation
       setIsTyping(true);
 
-      // Small delay for natural feel, then stream response
-      setTimeout(async () => {
-        try {
-          // Always prefix with username so AI remembers who is talking
-          let prompt = `${usernameRef.current}: ${userMsg}`;
+      try {
+        // Always prefix with username so AI remembers who is talking
+        let prompt = `${usernameRef.current}: ${userMsg}`;
 
-          if (lower.startsWith('/roast')) prompt += " [SYSTEM: ROAST ME BRUTALLY]";
-          if (lower.startsWith('/fact')) prompt += " [SYSTEM: FACT-CHECK THIS. Start with [VERIFIED], [FALSE], [UNVERIFIED], or [MISLEADING]]";
-          if (lower.startsWith('/topic')) prompt += " [SYSTEM: SUGGEST A WILD TOPIC]";
+        if (lower.startsWith('/roast')) prompt += " [SYSTEM: ROAST ME BRUTALLY]";
+        if (lower.startsWith('/fact')) prompt += " [SYSTEM: FACT-CHECK THIS. Start with [VERIFIED], [FALSE], [UNVERIFIED], or [MISLEADING]]";
+        if (lower.startsWith('/topic')) prompt += " [SYSTEM: SUGGEST A WILD TOPIC]";
 
-          const streamId = Date.now().toString(36) + Math.random().toString(36).slice(2, 5);
-          streamingMsgIdRef.current = streamId;
-          setIsTyping(false);
+        const streamId = Date.now().toString(36) + Math.random().toString(36).slice(2, 5);
+        streamingMsgIdRef.current = streamId;
+        setIsTyping(false);
 
-          const finalText = await sendMessageStreaming(prompt, (chunk) => {
-            upsertStreamingMessage(streamId, chunk, SenderType.STRANGER, moodConfig.persona);
-          });
+        await sendMessageStreaming(prompt, (chunk) => {
+          upsertStreamingMessage(streamId, chunk, SenderType.STRANGER, moodConfig.persona);
+        });
 
-          finalizeStreamingMessage(streamId);
-          if (soundEnabled) playSound('receive');
-        } catch (error) {
-          setIsTyping(false);
-          addMessage("Connection hiccup... try again! ⚡", SenderType.SYSTEM);
-        }
-      }, 300);
+        finalizeStreamingMessage(streamId);
+        if (soundEnabled) playSound('receive');
+      } catch (error) {
+        setIsTyping(false);
+        addMessage("⚡ Connection hiccup... try again!", SenderType.SYSTEM);
+      }
     }
   };
 
