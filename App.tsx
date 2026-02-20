@@ -10,10 +10,28 @@ import { SettingsPanel } from './components/SettingsPanel';
 import { loadPrefs, savePrefs } from './utils';
 import { Send, Power, Copy, Users, Bot, Menu, Settings, Mic, MicOff, Loader2 } from 'lucide-react';
 
+import { PrivacyPolicy } from './components/PrivacyPolicy';
+
 const App: React.FC = () => {
   // --- STATE ---
   const [prefs, setPrefs] = useState(loadPrefs());
   const [isInLobby, setIsInLobby] = useState(true);
+  const [showPrivacy, setShowPrivacy] = useState(window.location.pathname === '/privacy-policy');
+
+  useEffect(() => {
+    const handlePopState = () => {
+      setShowPrivacy(window.location.pathname === '/privacy-policy');
+    };
+    window.addEventListener('popstate', handlePopState);
+    return () => window.removeEventListener('popstate', handlePopState);
+  }, []);
+
+  if (showPrivacy) {
+    return <PrivacyPolicy onBack={() => {
+      window.history.pushState({}, '', '/');
+      setShowPrivacy(false);
+    }} />;
+  }
   
   const [status, setStatus] = useState<ConnectionStatus>(ConnectionStatus.IDLE);
   const [mode, setMode] = useState<ChatMode>('AI');

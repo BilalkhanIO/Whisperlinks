@@ -88,6 +88,12 @@ export const SettingsPanel: React.FC<SettingsPanelProps> = ({
           </div>
           
           <div className="h-6"></div> {/* Safe area */}
+          
+          <div className="text-center text-[10px] text-zinc-600 pt-4 border-t border-white/5">
+            <a href="/privacy-policy" target="_blank" rel="noopener noreferrer" className="hover:text-zinc-400 transition-colors">Privacy Policy</a>
+            <span className="mx-2">•</span>
+            <span>AdSense Enabled</span>
+          </div>
         </div>
       </div>
     </>
