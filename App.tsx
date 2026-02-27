@@ -12,6 +12,8 @@ import { Send, Power, Copy, Users, Bot, Menu, Settings, Mic, MicOff, Loader2 } f
 
 import { PrivacyPolicy } from './components/PrivacyPolicy';
 
+import { LandingPage } from './components/LandingPage';
+
 const App: React.FC = () => {
   // --- STATE ---
   const [prefs, setPrefs] = useState(loadPrefs());
@@ -418,62 +420,22 @@ const App: React.FC = () => {
   // --- RENDER ---
   if (isInLobby) {
     return (
-      <div className="h-screen w-full bg-void-black text-zinc-200 font-sans flex flex-col items-center justify-center relative overflow-hidden">
-        <MatrixRain />
-        <div className="z-10 w-full max-w-md px-6 flex flex-col items-center gap-6 animate-in zoom-in duration-500">
-           
-           <div className="bg-void-dark p-6 rounded-3xl border border-void-gray shadow-2xl relative group">
-              <div className="absolute -inset-1 bg-neon-green/20 rounded-3xl blur opacity-0 group-hover:opacity-100 transition-opacity duration-1000"></div>
-              <Bot size={48} className="text-zinc-100 relative z-10" />
-           </div>
-
-           <div className="text-center">
-             <h1 className="text-4xl font-black text-transparent bg-clip-text bg-gradient-to-br from-white to-zinc-600">WHISPERLINK</h1>
-             <p className="text-xs font-mono text-neon-green tracking-[0.3em] mt-1">SECURE NEURAL UPLINK v4.0</p>
-           </div>
-
-           <div className="w-full space-y-3">
-              <input 
-                value={prefs.username} 
-                onChange={(e) => setPrefs({...prefs, username: e.target.value})}
-                placeholder="ENTER CODENAME"
-                maxLength={12}
-                className="w-full bg-zinc-900/80 border border-zinc-700 text-center py-4 rounded-xl text-zinc-100 font-mono tracking-widest outline-none focus:border-neon-green focus:bg-zinc-900 transition-all"
-              />
-              
-              <div className="grid grid-cols-2 gap-3">
-                 <button onClick={() => handleEnterVoid('AI')} disabled={!prefs.username} className="bg-zinc-100 text-black py-4 rounded-xl font-bold hover:scale-[1.02] active:scale-95 transition-all disabled:opacity-50">
-                    SOLO LINK
-                 </button>
-                 <button onClick={() => handleEnterVoid('P2P')} disabled={!prefs.username} className="bg-neon-green text-black py-4 rounded-xl font-bold hover:scale-[1.02] active:scale-95 transition-all disabled:opacity-50">
-                    GROUP LINK
-                 </button>
-              </div>
-           </div>
-
-           {/* Quick Settings in Lobby */}
-           <div className="flex gap-4">
-              <button onClick={() => setShowSettings(true)} className="flex items-center gap-2 text-zinc-500 hover:text-white transition-colors text-xs font-mono">
-                 <Settings size={14} /> CONFIGURE PROTOCOLS
-              </button>
-           </div>
-           
-           {!hasApiKey && <div className="text-red-500 text-[10px] bg-red-900/20 px-3 py-1 rounded">⚠️ API KEY DISCONNECTED</div>}
-        </div>
-        
-        <SettingsPanel 
-          isOpen={showSettings} 
-          onClose={() => setShowSettings(false)}
-          currentLang={prefs.language}
-          setLang={(l) => updatePref('language', l)}
-          currentMood={prefs.mood}
-          setMood={(m) => updatePref('mood', m)}
-          sfx={prefs.sfxEnabled}
-          toggleSfx={() => updatePref('sfxEnabled', !prefs.sfxEnabled)}
-          voice={prefs.voiceEnabled}
-          toggleVoice={() => updatePref('voiceEnabled', !prefs.voiceEnabled)}
-        />
-      </div>
+      <LandingPage 
+        username={prefs.username}
+        setUsername={(name) => setPrefs({...prefs, username: name})}
+        onEnter={handleEnterVoid}
+        showSettings={showSettings}
+        setShowSettings={setShowSettings}
+        hasApiKey={hasApiKey}
+        currentLang={prefs.language}
+        setLang={(l) => updatePref('language', l)}
+        currentMood={prefs.mood}
+        setMood={(m) => updatePref('mood', m)}
+        sfx={prefs.sfxEnabled}
+        toggleSfx={() => updatePref('sfxEnabled', !prefs.sfxEnabled)}
+        voice={prefs.voiceEnabled}
+        toggleVoice={() => updatePref('voiceEnabled', !prefs.voiceEnabled)}
+      />
     );
   }
 
