@@ -1,5 +1,5 @@
 import React from 'react';
-import { Bot, Shield, Zap, Globe, Mic, Cpu, Lock, Users } from 'lucide-react';
+import { Bot, Shield, Zap, Globe, Mic, Cpu, Users } from 'lucide-react';
 import MatrixRain from './MatrixRain';
 import { SettingsPanel } from './SettingsPanel';
 import { ChatMode, ChatLanguage, ChatMood } from '../types';
@@ -8,6 +8,7 @@ interface LandingPageProps {
   username: string;
   setUsername: (name: string) => void;
   onEnter: (mode: ChatMode) => void;
+  onNavigate: (path: string) => void;
   showSettings: boolean;
   setShowSettings: (show: boolean) => void;
   hasApiKey: boolean;
@@ -23,7 +24,7 @@ interface LandingPageProps {
 }
 
 export const LandingPage: React.FC<LandingPageProps> = ({
-  username, setUsername, onEnter, showSettings, setShowSettings, hasApiKey,
+  username, setUsername, onEnter, onNavigate, showSettings, setShowSettings, hasApiKey,
   currentLang, setLang, currentMood, setMood, sfx, toggleSfx, voice, toggleVoice
 }) => {
   return (
@@ -132,6 +133,37 @@ export const LandingPage: React.FC<LandingPageProps> = ({
               companion. Whether you need a debate partner, a translator, or just a secure space to brainstorm, 
               the Neural Core adapts to your needs without compromising your privacy.
             </p>
+            <p className="text-zinc-400 leading-relaxed text-lg">
+              The product is aimed at short, purposeful conversations rather than endless feeds. That makes it useful for
+              study groups, collaborative planning, language practice, and temporary rooms that should not turn into another
+              permanent social network archive.
+            </p>
+          </div>
+        </section>
+
+        <section className="max-w-5xl mx-auto px-6 py-24">
+          <h2 className="text-3xl font-bold text-center mb-16">WHEN PEOPLE USE IT</h2>
+          <div className="grid md:grid-cols-2 gap-8">
+            <FeatureCard
+              icon={<Bot className="text-neon-purple" size={32} />}
+              title="Private AI Drafting"
+              desc="Use Solo Link to sketch ideas, rehearse difficult conversations, refine wording, or translate short passages without setting up an account system."
+            />
+            <FeatureCard
+              icon={<Users className="text-orange-500" size={32} />}
+              title="Temporary Group Rooms"
+              desc="Open a room for a one-off discussion, planning session, or friend group conversation, then let the session disappear naturally when the tab closes."
+            />
+            <FeatureCard
+              icon={<Shield className="text-neon-green" size={32} />}
+              title="Low-Retention Chats"
+              desc="The interface is designed for conversations that benefit from reduced persistence. That matters for brainstorming, lightweight moderation, and quick support exchanges."
+            />
+            <FeatureCard
+              icon={<Globe className="text-blue-500" size={32} />}
+              title="Language Practice"
+              desc="Switch between supported languages and use the AI mode for vocabulary drills, pronunciation support, or informal conversation practice."
+            />
           </div>
         </section>
 
@@ -158,6 +190,36 @@ export const LandingPage: React.FC<LandingPageProps> = ({
           </div>
         </section>
 
+        <section className="bg-void-dark/50 py-24 border-y border-white/5">
+          <div className="max-w-5xl mx-auto px-6 grid md:grid-cols-3 gap-8">
+            <div className="md:col-span-1">
+              <h2 className="text-3xl font-bold">GUIDES AND POLICIES</h2>
+              <p className="text-zinc-400 mt-4 leading-relaxed">
+                Review how the product works, how support requests are handled, and the legal pages that explain privacy and
+                acceptable use.
+              </p>
+            </div>
+            <div className="md:col-span-2 grid sm:grid-cols-2 gap-4">
+              <button onClick={() => onNavigate('/about')} className="text-left bg-zinc-900/60 border border-white/5 rounded-2xl p-5 hover:border-neon-green/40 transition-colors">
+                <p className="font-bold text-white">How It Works</p>
+                <p className="text-sm text-zinc-400 mt-2">Detailed explanation of Solo Link, Group Link, and product design goals.</p>
+              </button>
+              <button onClick={() => onNavigate('/help')} className="text-left bg-zinc-900/60 border border-white/5 rounded-2xl p-5 hover:border-neon-green/40 transition-colors">
+                <p className="font-bold text-white">Help Center</p>
+                <p className="text-sm text-zinc-400 mt-2">Setup steps, troubleshooting, and safe-use recommendations.</p>
+              </button>
+              <button onClick={() => onNavigate('/privacy-policy')} className="text-left bg-zinc-900/60 border border-white/5 rounded-2xl p-5 hover:border-neon-green/40 transition-colors">
+                <p className="font-bold text-white">Privacy Policy</p>
+                <p className="text-sm text-zinc-400 mt-2">What data is processed, what stays local, and what third parties handle.</p>
+              </button>
+              <button onClick={() => onNavigate('/terms')} className="text-left bg-zinc-900/60 border border-white/5 rounded-2xl p-5 hover:border-neon-green/40 transition-colors">
+                <p className="font-bold text-white">Terms And Contact</p>
+                <p className="text-sm text-zinc-400 mt-2">Usage expectations, service limits, and support contact details.</p>
+              </button>
+            </div>
+          </div>
+        </section>
+
         {/* Footer */}
         <footer className="border-t border-white/10 bg-void-black py-12">
           <div className="max-w-6xl mx-auto px-6 flex flex-col md:flex-row justify-between items-center gap-6">
@@ -166,9 +228,10 @@ export const LandingPage: React.FC<LandingPageProps> = ({
               <span className="font-bold text-zinc-300">WHISPERLINK</span>
             </div>
             <div className="flex gap-8 text-sm text-zinc-500">
-              <a href="/privacy-policy" className="hover:text-neon-green transition-colors">Privacy Policy</a>
-              <a href="#" className="hover:text-neon-green transition-colors">Terms of Service</a>
-              <a href="#" className="hover:text-neon-green transition-colors">Contact</a>
+              <button onClick={() => onNavigate('/privacy-policy')} className="hover:text-neon-green transition-colors">Privacy Policy</button>
+              <button onClick={() => onNavigate('/terms')} className="hover:text-neon-green transition-colors">Terms of Service</button>
+              <button onClick={() => onNavigate('/contact')} className="hover:text-neon-green transition-colors">Contact</button>
+              <button onClick={() => onNavigate('/help')} className="hover:text-neon-green transition-colors">Help</button>
             </div>
             <div className="text-xs text-zinc-700 font-mono">
               SYSTEM STATUS: ONLINE

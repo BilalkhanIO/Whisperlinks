@@ -8,33 +8,47 @@ import { EncryptionEffect } from './components/EncryptionEffect';
 import MatrixRain from './components/MatrixRain';
 import { SettingsPanel } from './components/SettingsPanel';
 import { loadPrefs, savePrefs } from './utils';
-import { Send, Power, Copy, Users, Bot, Menu, Settings, Mic, MicOff, Loader2 } from 'lucide-react';
-
-import { PrivacyPolicy } from './components/PrivacyPolicy';
+import { Send, Power, Users, Settings, Mic, Loader2 } from 'lucide-react';
 
 import { LandingPage } from './components/LandingPage';
+import { AboutPage, ContactPage, HelpPage, PrivacyPolicy, TermsPage } from './components/ContentPages';
 
 const App: React.FC = () => {
   // --- STATE ---
   const [prefs, setPrefs] = useState(loadPrefs());
   const [isInLobby, setIsInLobby] = useState(true);
-  const [showPrivacy, setShowPrivacy] = useState(window.location.pathname === '/privacy-policy');
+  const [currentPath, setCurrentPath] = useState(window.location.pathname);
 
   useEffect(() => {
     const handlePopState = () => {
-      setShowPrivacy(window.location.pathname === '/privacy-policy');
+      setCurrentPath(window.location.pathname);
     };
     window.addEventListener('popstate', handlePopState);
     return () => window.removeEventListener('popstate', handlePopState);
   }, []);
 
-  if (showPrivacy) {
-    return <PrivacyPolicy onBack={() => {
-      window.history.pushState({}, '', '/');
-      setShowPrivacy(false);
-    }} />;
-  }
-  
+  const navigateTo = (path: string) => {
+    window.history.pushState({}, '', path);
+    setCurrentPath(path);
+  };
+
+  const renderContentPage = () => {
+    switch (currentPath) {
+      case '/privacy-policy':
+        return <PrivacyPolicy onBack={() => navigateTo('/')} />;
+      case '/terms':
+        return <TermsPage onBack={() => navigateTo('/')} />;
+      case '/contact':
+        return <ContactPage onBack={() => navigateTo('/')} />;
+      case '/about':
+        return <AboutPage onBack={() => navigateTo('/')} />;
+      case '/help':
+        return <HelpPage onBack={() => navigateTo('/')} />;
+      default:
+        return null;
+    }
+  };
+
   const [status, setStatus] = useState<ConnectionStatus>(ConnectionStatus.IDLE);
   const [mode, setMode] = useState<ChatMode>('AI');
   const [messages, setMessages] = useState<Message[]>([]);
@@ -418,12 +432,16 @@ const App: React.FC = () => {
   };
 
   // --- RENDER ---
+  const contentPage = renderContentPage();
+  if (contentPage) return contentPage;
+
   if (isInLobby) {
     return (
       <LandingPage 
         username={prefs.username}
         setUsername={(name) => setPrefs({...prefs, username: name})}
         onEnter={handleEnterVoid}
+        onNavigate={navigateTo}
         showSettings={showSettings}
         setShowSettings={setShowSettings}
         hasApiKey={hasApiKey}
@@ -453,6 +471,12 @@ const App: React.FC = () => {
                     <span>{prefs.mood}</span>
                     <span className="text-zinc-700">|</span>
                     <span>{prefs.language}</span>
+                    {mode === 'P2P' && (
+                      <>
+                        <span className="text-zinc-700">|</span>
+                        <span>{participants.length} NODE{participants.length === 1 ? '' : 'S'}</span>
+                      </>
+                    )}
                 </div>
              </div>
          </div>
