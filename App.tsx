@@ -11,6 +11,7 @@ import { SmartReplies } from './components/SmartReplies';
 import { QRCodeModal } from './components/QRCodeModal';
 import { ShareModal } from './components/ShareModal';
 import { CodeEntryModal } from './components/CodeEntryModal';
+import { useInstallPrompt } from './components/InstallPrompt';
 import { ScrollToBottom } from './components/ScrollToBottom';
 import { EncryptionEffect } from './components/EncryptionEffect';
 import MatrixRain from './components/MatrixRain';
@@ -19,7 +20,7 @@ import { loadPrefs, savePrefs } from './utils';
 import { COMMANDS, MOOD_META } from './constants';
 import { LandingPage } from './components/LandingPage';
 import { AboutPage, ContactPage, HelpPage, PrivacyPolicy, TermsPage } from './components/ContentPages';
-import { Send, Power, Settings, Mic, Loader2, Terminal, QrCode, Share2 } from 'lucide-react';
+import { Send, Power, Settings, Mic, Loader2, Terminal, QrCode, Share2, Download } from 'lucide-react';
 
 const MAX_MSG_LENGTH = 500;
 const WHISPER_TTL = 15_000;
@@ -84,6 +85,7 @@ const App: React.FC = () => {
   const wrongAttemptsRef = useRef<Map<string, number>>(new Map());
 
   const hasApiKey = !!process.env.API_KEY;
+  const { canInstall, triggerInstall } = useInstallPrompt();
 
   // ── Helpers ──
   const getAiName = (mood: ChatMood): string => MOOD_META[mood].name;
@@ -754,6 +756,15 @@ const App: React.FC = () => {
         </div>
 
         <div className="flex gap-1.5">
+          {canInstall && (
+            <button
+              onClick={triggerInstall}
+              className="p-2 rounded-xl text-zinc-500 hover:text-neon-green hover:bg-neon-green/5 transition-all"
+              aria-label="Install app" title="Install WhisperLink"
+            >
+              <Download size={17} />
+            </button>
+          )}
           <button onClick={() => setShowSettings(true)} className="p-2 rounded-xl text-zinc-500 hover:text-zinc-200 hover:bg-white/5 transition-all" aria-label="Settings" title="Settings">
             <Settings size={17} />
           </button>

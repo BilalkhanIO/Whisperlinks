@@ -2,6 +2,7 @@ import React, { useState, useEffect } from 'react';
 import { Bot, Shield, Zap, Globe, Mic, Cpu, Users, ChevronDown, Settings as SettingsIcon, Lock, ArrowLeft } from 'lucide-react';
 import MatrixRain from './MatrixRain';
 import { SettingsPanel } from './SettingsPanel';
+import { InstallBanner } from './InstallPrompt';
 import { ChatMode, ChatLanguage, ChatMood } from '../types';
 import { MOOD_META } from '../constants';
 
@@ -296,6 +297,11 @@ export const LandingPage: React.FC<LandingPageProps> = ({
             : step === 'group-setup'
               ? renderGroupSetupCard()
               : renderMainCard()}
+
+          {/* Install banner */}
+          {!isJoining && step === 'main' && (
+            <InstallBanner onDismiss={() => {}} />
+          )}
 
           {/* Scroll hint — only on main step */}
           {!isJoining && step === 'main' && (
