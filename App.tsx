@@ -9,6 +9,9 @@ import { playSound, decodeAndPlayAudio, speakWithBrowser } from './services/audi
 import { ChatMessage } from './components/ChatMessage';
 import { SmartReplies } from './components/SmartReplies';
 import { QRCodeModal } from './components/QRCodeModal';
+import { ShareModal } from './components/ShareModal';
+import { CodeEntryModal } from './components/CodeEntryModal';
+import { useInstallPrompt } from './components/InstallPrompt';
 import { ScrollToBottom } from './components/ScrollToBottom';
 import { EncryptionEffect } from './components/EncryptionEffect';
 import MatrixRain from './components/MatrixRain';
@@ -17,7 +20,7 @@ import { loadPrefs, savePrefs } from './utils';
 import { COMMANDS, MOOD_META } from './constants';
 import { LandingPage } from './components/LandingPage';
 import { AboutPage, ContactPage, HelpPage, PrivacyPolicy, TermsPage } from './components/ContentPages';
-import { Send, Power, Users, Settings, Mic, Loader2, Terminal, QrCode } from 'lucide-react';
+import { Send, Power, Settings, Mic, Loader2, Terminal, QrCode, Share2, Download } from 'lucide-react';
 
 const MAX_MSG_LENGTH = 500;
 const WHISPER_TTL = 15_000;
@@ -30,12 +33,19 @@ const App: React.FC = () => {
 
   // ── Preferences ──
   const [prefs, setPrefs] = useState(loadPrefs());
+  const prefsRef = useRef(prefs);
+  useEffect(() => { prefsRef.current = prefs; }, [prefs]);
 
   // ── Connection ──
   const [status, setStatus] = useState<ConnectionStatus>(ConnectionStatus.IDLE);
   const [mode, setMode] = useState<ChatMode>('AI');
   const [peerId, setPeerId] = useState<string | null>(null);
   const [participants, setParticipants] = useState<UserInfo[]>([]);
+
+  // ── Room ──
+  const [roomName, setRoomName] = useState<string>('');
+  const roomNameRef = useRef<string>('');
+  const roomCodeRef = useRef<string>('');
 
   // ── Chat ──
   const [messages, setMessages] = useState<Message[]>([]);
@@ -50,10 +60,15 @@ const App: React.FC = () => {
   const [showSettings, setShowSettings] = useState(false);
   const [showCommandHints, setShowCommandHints] = useState(false);
   const [showQR, setShowQR] = useState(false);
-  const [showInviteToast, setShowInviteToast] = useState(false);
+  const [showShareModal, setShowShareModal] = useState(false);
   const [isScrolledUp, setIsScrolledUp] = useState(false);
   const [unreadCount, setUnreadCount] = useState(0);
   const [isListening, setIsListening] = useState(false);
+
+  // ── Room code gate (guest side) ──
+  const [showCodeModal, setShowCodeModal] = useState(false);
+  const [codeModalError, setCodeModalError] = useState('');
+  const pendingConnRef = useRef<DataConnection | null>(null);
 
   // ── Refs ──
   const peerRef = useRef<Peer | null>(null);
@@ -67,8 +82,10 @@ const App: React.FC = () => {
   const typingTimeoutRef = useRef<NodeJS.Timeout | null>(null);
   const reconnectAttemptsRef = useRef(0);
   const reconnectHostIdRef = useRef<string | null>(null);
+  const wrongAttemptsRef = useRef<Map<string, number>>(new Map());
 
   const hasApiKey = !!process.env.API_KEY;
+  const { canInstall, triggerInstall } = useInstallPrompt();
 
   // ── Helpers ──
   const getAiName = (mood: ChatMood): string => MOOD_META[mood].name;
@@ -87,7 +104,15 @@ const App: React.FC = () => {
 
   useEffect(() => {
     const params = new URLSearchParams(window.location.search);
-    if (params.get('join')) setMode('P2P');
+    if (params.get('join')) {
+      setMode('P2P');
+      const rn = params.get('room');
+      if (rn) {
+        const decoded = decodeURIComponent(rn);
+        roomNameRef.current = decoded;
+        setRoomName(decoded);
+      }
+    }
   }, []);
 
   useEffect(() => {
@@ -142,12 +167,12 @@ const App: React.FC = () => {
 
   // ── Message helpers ──
   const addSystemMsg = (text: string) => {
-    if (prefs.sfxEnabled) playSound('message');
+    if (prefsRef.current.sfxEnabled) playSound('message');
     setMessages(p => [...p, { id: Math.random().toString(36), text, sender: SenderType.SYSTEM, timestamp: new Date() }]);
   };
 
   const addMessage = (text: string, sender: SenderType, username?: string, opts: Partial<Message> = {}) => {
-    if (prefs.sfxEnabled) playSound('message');
+    if (prefsRef.current.sfxEnabled) playSound('message');
     setMessages(p => [...p, {
       id: Math.random().toString(36),
       text, sender, username,
@@ -170,7 +195,7 @@ const App: React.FC = () => {
     rec.interimResults = false;
     const langMap: Record<string, string> = { SPANISH: 'es-ES', FRENCH: 'fr-FR', GERMAN: 'de-DE', JAPANESE: 'ja-JP', ARABIC: 'ar-SA', HINDI: 'hi-IN' };
     rec.lang = langMap[prefs.language] || 'en-US';
-    rec.onstart = () => { setIsListening(true); if (prefs.sfxEnabled) playSound('send'); };
+    rec.onstart = () => { setIsListening(true); if (prefsRef.current.sfxEnabled) playSound('send'); };
     rec.onend = () => setIsListening(false);
     rec.onresult = (e: SpeechRecognitionEvent) => {
       const t = e.results[0][0].transcript;
@@ -181,15 +206,28 @@ const App: React.FC = () => {
   };
 
   // ── Lobby ──
-  const handleEnterVoid = (selectedMode: ChatMode) => {
+  const handleEnterVoid = (selectedMode: ChatMode, roomConfig?: { name: string; code: string }) => {
     if (!prefs.username.trim()) return;
     savePrefs(prefs);
     if (prefs.sfxEnabled) playSound('connect');
     setIsInLobby(false);
     setMode(selectedMode);
-    const joinParam = new URLSearchParams(window.location.search).get('join');
-    if (selectedMode === 'AI') handleConnectAI();
-    else joinParam ? initializePeer(false, joinParam) : initializePeer(true);
+
+    if (selectedMode === 'AI') {
+      handleConnectAI();
+    } else {
+      const joinParam = new URLSearchParams(window.location.search).get('join');
+      if (!joinParam) {
+        // Host: set room name and code from setup form
+        const name = roomConfig?.name || `${prefs.username}'s Room`;
+        const code = (roomConfig?.code || '').toUpperCase();
+        roomNameRef.current = name;
+        roomCodeRef.current = code;
+        setRoomName(name);
+      }
+      // Guest: roomName already set from URL param in the initial useEffect
+      joinParam ? initializePeer(false, joinParam) : initializePeer(true);
+    }
   };
 
   // ── P2P ──
@@ -199,16 +237,17 @@ const App: React.FC = () => {
     if (hostId) reconnectHostIdRef.current = hostId;
     if (peerRef.current) peerRef.current.destroy();
     connectionsRef.current.clear();
+    wrongAttemptsRef.current.clear();
 
     const peer = new Peer();
     peerRef.current = peer;
 
     peer.on('open', (id) => {
       setPeerId(id);
-      setParticipants([{ peerId: id, username: prefs.username, isHost }]);
+      setParticipants([{ peerId: id, username: prefsRef.current.username, isHost }]);
       if (isHost) {
         setStatus(ConnectionStatus.WAITING_FOR_PEER);
-        if (hasApiKey) initializeChatSession(prefs.mood, prefs.language);
+        if (hasApiKey) initializeChatSession(prefsRef.current.mood, prefsRef.current.language);
       } else if (hostId) {
         addSystemMsg('CONNECTING TO SECURE ROOM...');
         setupConnection(peer.connect(hostId));
@@ -217,7 +256,7 @@ const App: React.FC = () => {
 
     peer.on('connection', setupConnection);
     peer.on('error', (err) => {
-      if (prefs.sfxEnabled) playSound('error');
+      if (prefsRef.current.sfxEnabled) playSound('error');
       const msgMap: Record<string, string> = {
         'peer-unavailable': 'PEER UNAVAILABLE — INVALID OR EXPIRED LINK',
         'network': 'NETWORK ERROR — CHECK YOUR CONNECTION',
@@ -242,19 +281,55 @@ const App: React.FC = () => {
   // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
+  // Called once access is granted (after code verification or if no code)
+  const proceedWithConnection = (conn: DataConnection) => {
+    setStatus(ConnectionStatus.CONNECTED);
+    reconnectAttemptsRef.current = 0;
+    if (prefsRef.current.sfxEnabled) playSound('connect');
+    conn.send({
+      type: 'handshake',
+      user: { peerId: peerRef.current?.id, username: prefsRef.current.username, isHost: isHostRef.current },
+    });
+    if (isHostRef.current) {
+      conn.send({ type: 'sys_update', mood: prefsRef.current.mood, lang: prefsRef.current.language });
+    }
+  };
+
   const setupConnection = (conn: DataConnection) => {
     connectionsRef.current.set(conn.peer, conn);
+
     conn.on('open', () => {
-      setStatus(ConnectionStatus.CONNECTED);
-      reconnectAttemptsRef.current = 0;
-      if (prefs.sfxEnabled) playSound('connect');
-      conn.send({ type: 'handshake', user: { peerId: peerRef.current?.id, username: prefs.username, isHost: isHostRef.current } });
-      if (isHostRef.current) conn.send({ type: 'sys_update', mood: prefs.mood, lang: prefs.language });
+      if (isHostRef.current) {
+        // Host: announce room info and wait for code verification if needed
+        conn.send({
+          type: 'room_challenge',
+          name: roomNameRef.current,
+          hasCode: !!roomCodeRef.current,
+        });
+        if (!roomCodeRef.current) {
+          proceedWithConnection(conn);
+        }
+        // else: wait for 'code_verify' from guest
+      }
+      // Guest: wait for 'room_challenge' from host
     });
+
     conn.on('data', (data: unknown) => handleDataPacket(data as Record<string, unknown>, conn.peer));
+
     conn.on('close', () => {
       connectionsRef.current.delete(conn.peer);
       setParticipants(prev => prev.filter(p => p.peerId !== conn.peer));
+
+      // Connection closed while guest was entering code → kicked or host left
+      if (pendingConnRef.current === conn) {
+        pendingConnRef.current = null;
+        setShowCodeModal(false);
+        setCodeModalError('');
+        addSystemMsg('CONNECTION CLOSED — ROOM UNAVAILABLE');
+        setIsInLobby(true);
+        return;
+      }
+
       if (connectionsRef.current.size === 0 && !isHostRef.current) {
         setStatus(ConnectionStatus.DISCONNECTED);
         tryAutoReconnect();
@@ -264,6 +339,55 @@ const App: React.FC = () => {
 
   const handleDataPacket = (data: Record<string, unknown>, senderPeerId: string) => {
     switch (data.type) {
+      case 'room_challenge': {
+        // Guest receives this from host
+        const name = String(data.name || 'Private Room');
+        roomNameRef.current = name;
+        setRoomName(name);
+        if (data.hasCode) {
+          pendingConnRef.current = connectionsRef.current.get(senderPeerId) ?? null;
+          setShowCodeModal(true);
+        } else {
+          const conn = connectionsRef.current.get(senderPeerId);
+          if (conn) proceedWithConnection(conn);
+        }
+        break;
+      }
+      case 'code_verify': {
+        // Host receives this from guest
+        if (!isHostRef.current) break;
+        const conn = connectionsRef.current.get(senderPeerId);
+        if (!conn) break;
+        const attempts = (wrongAttemptsRef.current.get(senderPeerId) ?? 0) + 1;
+        if (String(data.code).toUpperCase() === roomCodeRef.current) {
+          wrongAttemptsRef.current.delete(senderPeerId);
+          conn.send({ type: 'code_accepted' });
+          proceedWithConnection(conn);
+        } else {
+          wrongAttemptsRef.current.set(senderPeerId, attempts);
+          if (attempts >= 3) {
+            conn.send({ type: 'code_rejected', message: 'Too many wrong attempts. Access denied.' });
+            setTimeout(() => conn.close(), 500);
+          } else {
+            conn.send({ type: 'code_rejected', message: `Wrong code — ${3 - attempts} attempt${3 - attempts !== 1 ? 's' : ''} left.` });
+          }
+        }
+        break;
+      }
+      case 'code_accepted': {
+        // Guest receives this — proceed to chat
+        setShowCodeModal(false);
+        setCodeModalError('');
+        const conn = pendingConnRef.current ?? connectionsRef.current.get(senderPeerId);
+        if (conn) proceedWithConnection(conn);
+        pendingConnRef.current = null;
+        break;
+      }
+      case 'code_rejected': {
+        // Guest receives this — show error in code modal
+        setCodeModalError(String(data.message || 'Incorrect code. Please try again.'));
+        break;
+      }
       case 'handshake':
         setParticipants(prev => {
           const u = data.user as UserInfo;
@@ -336,7 +460,7 @@ const App: React.FC = () => {
     if (aiTimeoutRef.current) clearTimeout(aiTimeoutRef.current);
     if (triggerText) {
       const lower = triggerText.toLowerCase();
-      const aiName = MOOD_META[prefs.mood].name.toLowerCase();
+      const aiName = MOOD_META[prefsRef.current.mood].name.toLowerCase();
       if (lower.includes('@') || lower.includes(aiName) || lower.includes('bot') || lower.startsWith('/')) {
         triggerGroupAI(triggerText, senderName ?? 'User');
         return;
@@ -346,7 +470,7 @@ const App: React.FC = () => {
     aiTimeoutRef.current = setTimeout(() => {
       if (Date.now() - lastActivityTimeRef.current >= delay) triggerGroupAI("Context Check: Everyone is silent.", "System");
     }, delay);
-  }, [prefs.mood, mode, hasApiKey]);
+  }, [mode, hasApiKey]);
 
   const triggerGroupAI = async (triggerText: string, senderName: string) => {
     setIsLocalTyping(true);
@@ -358,13 +482,13 @@ const App: React.FC = () => {
         : `${senderName}: ${triggerText}`;
       const response = await sendMessageToGemini(prompt);
       setIsLocalTyping(false);
-      const aiName = getAiName(prefs.mood);
+      const aiName = getAiName(prefsRef.current.mood);
       addMessage(response, SenderType.STRANGER, aiName);
       broadcastData({ type: 'message', text: response, username: aiName });
       lastActivityTimeRef.current = Date.now();
-      if (prefs.voiceEnabled) {
-        const audio = await generateSpeech(response, prefs.mood);
-        if (audio) decodeAndPlayAudio(audio); else speakWithBrowser(response, prefs.mood);
+      if (prefsRef.current.voiceEnabled) {
+        const audio = await generateSpeech(response, prefsRef.current.mood);
+        if (audio) decodeAndPlayAudio(audio); else speakWithBrowser(response, prefsRef.current.mood);
       }
     } catch { setIsLocalTyping(false); }
   };
@@ -519,12 +643,53 @@ const App: React.FC = () => {
     peerRef.current?.destroy();
     reconnectHostIdRef.current = null;
     reconnectAttemptsRef.current = 0;
+    pendingConnRef.current = null;
     setIsInLobby(true);
     setMessages([]);
     setParticipants([]);
     setSmartReplies([]);
     setReplyingTo(null);
+    setShowCodeModal(false);
+    setCodeModalError('');
+    setRoomName('');
+    roomNameRef.current = '';
+    roomCodeRef.current = '';
     window.history.pushState({}, '', window.location.pathname);
+  };
+
+  // ── Share ──
+  const inviteUrl = peerId
+    ? `${window.location.origin}?join=${peerId}&room=${encodeURIComponent(roomName || 'Private Room')}`
+    : '';
+
+  const shareMessage = `🤫 ${prefs.username} invited you to "${roomName || 'a private room'}" on WhisperLink — private P2P encrypted chat, zero logs.`;
+
+  const handleShare = async () => {
+    if (!inviteUrl) return;
+    const shareData = {
+      title: `Join ${roomName || 'a room'} on WhisperLink`,
+      text: shareMessage,
+      url: inviteUrl,
+    };
+    if (navigator.share) {
+      try { await navigator.share(shareData); } catch { /* user cancelled */ }
+    } else {
+      setShowShareModal(true);
+    }
+  };
+
+  // ── Code entry (guest) ──
+  const handleCodeSubmit = (code: string) => {
+    setCodeModalError('');
+    pendingConnRef.current?.send({ type: 'code_verify', code: code.toUpperCase() });
+  };
+
+  const handleCodeCancel = () => {
+    pendingConnRef.current?.close();
+    pendingConnRef.current = null;
+    setShowCodeModal(false);
+    setCodeModalError('');
+    handleDisconnect();
   };
 
   // ── Content pages ──
@@ -564,8 +729,6 @@ const App: React.FC = () => {
     );
   }
 
-  const inviteUrl = peerId ? `${window.location.origin}?join=${peerId}` : '';
-
   return (
     <div className="h-screen w-full bg-void-black text-zinc-200 font-sans flex flex-col relative overflow-hidden">
       <MatrixRain />
@@ -576,7 +739,9 @@ const App: React.FC = () => {
           <div className={`w-2 h-2 rounded-full shrink-0 ${status === ConnectionStatus.CONNECTED ? 'bg-neon-green animate-pulse' : 'bg-red-500'}`} aria-label={status === ConnectionStatus.CONNECTED ? 'Connected' : 'Disconnected'} />
           <div>
             <div className="flex items-center gap-2">
-              <h2 className="font-bold text-sm text-zinc-200">{mode === 'P2P' ? 'Group Channel' : 'Secure Uplink'}</h2>
+              <h2 className="font-bold text-sm text-zinc-200">
+                {mode === 'P2P' ? (roomName || 'Group Channel') : 'Secure Uplink'}
+              </h2>
               <span className="hidden sm:flex items-center gap-1 bg-void-dark border border-white/8 rounded-full px-2 py-0.5 text-[10px]">
                 <span aria-hidden="true">{MOOD_META[prefs.mood].emoji}</span>
                 <span className="text-zinc-400 font-mono">{MOOD_META[prefs.mood].name}</span>
@@ -591,6 +756,15 @@ const App: React.FC = () => {
         </div>
 
         <div className="flex gap-1.5">
+          {canInstall && (
+            <button
+              onClick={triggerInstall}
+              className="p-2 rounded-xl text-zinc-500 hover:text-neon-green hover:bg-neon-green/5 transition-all"
+              aria-label="Install app" title="Install WhisperLink"
+            >
+              <Download size={17} />
+            </button>
+          )}
           <button onClick={() => setShowSettings(true)} className="p-2 rounded-xl text-zinc-500 hover:text-zinc-200 hover:bg-white/5 transition-all" aria-label="Settings" title="Settings">
             <Settings size={17} />
           </button>
@@ -604,16 +778,11 @@ const App: React.FC = () => {
                 <QrCode size={17} />
               </button>
               <button
-                onClick={() => { navigator.clipboard.writeText(inviteUrl); setShowInviteToast(true); setTimeout(() => setShowInviteToast(false), 2500); }}
-                className="p-2 rounded-xl text-neon-green hover:bg-neon-green/10 transition-all relative"
-                aria-label="Copy invite link" title="Copy link"
+                onClick={handleShare}
+                className="p-2 rounded-xl text-neon-green hover:bg-neon-green/10 transition-all"
+                aria-label="Share invite link" title="Share link"
               >
-                <Users size={17} />
-                {showInviteToast && (
-                  <div className="absolute top-10 right-0 bg-neon-green text-black text-[10px] px-2.5 py-1 rounded-lg font-bold whitespace-nowrap shadow-lg z-50" role="status">
-                    Link copied!
-                  </div>
-                )}
+                <Share2 size={17} />
               </button>
             </>
           )}
@@ -646,6 +815,22 @@ const App: React.FC = () => {
           <div className="flex flex-col items-center justify-center h-full gap-4 text-zinc-500 font-mono text-xs" aria-live="polite">
             <div className="w-8 h-8 border-2 border-neon-green border-t-transparent rounded-full animate-spin" role="status" aria-label="Connecting" />
             <EncryptionEffect text={status === ConnectionStatus.WAITING_FOR_PEER ? 'AWAITING PEER...' : 'ESTABLISHING CONNECTION...'} />
+            {mode === 'P2P' && status === ConnectionStatus.WAITING_FOR_PEER && peerId && (
+              <div className="flex gap-2 mt-2">
+                <button
+                  onClick={() => setShowQR(true)}
+                  className="flex items-center gap-1.5 border border-white/10 rounded-lg px-3 py-1.5 text-zinc-400 hover:border-neon-green/30 hover:text-neon-green transition-all"
+                >
+                  <QrCode size={13} /> QR Code
+                </button>
+                <button
+                  onClick={handleShare}
+                  className="flex items-center gap-1.5 border border-neon-green/30 rounded-lg px-3 py-1.5 text-neon-green hover:bg-neon-green/5 transition-all"
+                >
+                  <Share2 size={13} /> Share Link
+                </button>
+              </div>
+            )}
           </div>
         )}
 
@@ -773,7 +958,29 @@ const App: React.FC = () => {
         voice={prefs.voiceEnabled} toggleVoice={() => updatePref('voiceEnabled', !prefs.voiceEnabled)}
       />
 
-      <QRCodeModal url={inviteUrl} isOpen={showQR} onClose={() => setShowQR(false)} />
+      <QRCodeModal
+        url={inviteUrl}
+        roomName={roomName || 'Private Room'}
+        isOpen={showQR}
+        onClose={() => setShowQR(false)}
+      />
+
+      <ShareModal
+        url={inviteUrl}
+        roomName={roomName || 'Private Room'}
+        shareText={shareMessage}
+        isOpen={showShareModal}
+        onClose={() => setShowShareModal(false)}
+      />
+
+      {showCodeModal && (
+        <CodeEntryModal
+          roomName={roomName || 'Private Room'}
+          error={codeModalError}
+          onSubmit={handleCodeSubmit}
+          onCancel={handleCodeCancel}
+        />
+      )}
     </div>
   );
 };
