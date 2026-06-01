@@ -1,6 +1,6 @@
 import React, { useState, useEffect, useRef, useCallback } from 'react';
 import Peer, { DataConnection } from 'peerjs';
-import { Message, SenderType, ConnectionStatus, ChatMood, ChatMode, UserInfo, ChatLanguage } from './types';
+import { Message, SenderType, ConnectionStatus, ChatMood, ChatMode, UserInfo } from './types';
 import { sendMessageToGemini, initializeChatSession, resetSession, generateSpeech } from './services/geminiService';
 import { playSound, decodeAndPlayAudio } from './services/audioService';
 import { ChatMessage } from './components/ChatMessage';
@@ -26,6 +26,14 @@ const App: React.FC = () => {
     window.addEventListener('popstate', handlePopState);
     return () => window.removeEventListener('popstate', handlePopState);
   }, []);
+
+  useEffect(() => {
+    const handleKeyDown = (e: KeyboardEvent) => {
+      if (e.key === 'Escape' && showSettings) setShowSettings(false);
+    };
+    window.addEventListener('keydown', handleKeyDown);
+    return () => window.removeEventListener('keydown', handleKeyDown);
+  }, [showSettings]);
 
   const navigateTo = (path: string) => {
     window.history.pushState({}, '', path);
@@ -72,7 +80,7 @@ const App: React.FC = () => {
   const connectionsRef = useRef<Map<string, DataConnection>>(new Map());
   const messagesEndRef = useRef<HTMLDivElement>(null);
   const isHostRef = useRef<boolean>(false);
-  const recognitionRef = useRef<any>(null);
+  const recognitionRef = useRef<SpeechRecognition | null>(null);
   
   // Intelligent Timing Refs
   const lastActivityTimeRef = useRef<number>(Date.now());
@@ -80,6 +88,17 @@ const App: React.FC = () => {
   const typingTimeoutRef = useRef<NodeJS.Timeout | null>(null);
   
   const hasApiKey = !!process.env.API_KEY;
+
+  const getAiName = (mood: ChatMood): string => {
+    const names: Record<ChatMood, string> = {
+      FUNNY: 'Lala',
+      SAD: 'Ghamgeen',
+      FACT_CHECK: 'Verifier',
+      FLIRTY: 'Rizzler',
+      ANGRY: 'Krodh',
+    };
+    return names[mood];
+  };
 
   // --- INITIALIZATION ---
   useEffect(() => {
@@ -117,13 +136,14 @@ const App: React.FC = () => {
       return;
     }
 
-    const SpeechRecognition = (window as any).SpeechRecognition || (window as any).webkitSpeechRecognition;
-    if (!SpeechRecognition) {
+    const SpeechRecognitionAPI = (window as typeof window & { SpeechRecognition?: typeof SpeechRecognition; webkitSpeechRecognition?: typeof SpeechRecognition }).SpeechRecognition
+      || (window as typeof window & { webkitSpeechRecognition?: typeof SpeechRecognition }).webkitSpeechRecognition;
+    if (!SpeechRecognitionAPI) {
       alert("Voice input is not supported in this browser.");
       return;
     }
 
-    const recognition = new SpeechRecognition();
+    const recognition = new SpeechRecognitionAPI();
     recognition.continuous = false;
     recognition.interimResults = false;
     
@@ -151,7 +171,7 @@ const App: React.FC = () => {
       setIsListening(false);
     };
 
-    recognition.onresult = (event: any) => {
+    recognition.onresult = (event: SpeechRecognitionEvent) => {
       const transcript = event.results[0][0].transcript;
       setInputText(prev => (prev ? prev + ' ' : '') + transcript);
     };
@@ -204,9 +224,15 @@ const App: React.FC = () => {
     });
 
     peer.on('connection', setupConnection);
-    peer.on('error', () => {
+    peer.on('error', (err) => {
        if (prefs.sfxEnabled) playSound('error');
-       addMessage(`CONNECTION ERROR`, SenderType.SYSTEM);
+       const msg = err.type === 'peer-unavailable'
+         ? 'PEER UNAVAILABLE — INVALID OR EXPIRED LINK'
+         : err.type === 'network'
+         ? 'NETWORK ERROR — CHECK YOUR CONNECTION'
+         : `CONNECTION ERROR: ${err.type?.toUpperCase() ?? 'UNKNOWN'}`;
+       addMessage(msg, SenderType.SYSTEM);
+       setStatus(ConnectionStatus.DISCONNECTED);
     });
   };
 
@@ -332,8 +358,7 @@ const App: React.FC = () => {
             const response = await sendMessageToGemini(prompt);
             
             setIsLocalTyping(false);
-            const aiName = prefs.mood === 'FUNNY' ? 'Lala' : prefs.mood === 'SAD' ? 'Ghamgeen' : 'TruthBot';
-            
+            const aiName = getAiName(prefs.mood);
             addMessage(response, SenderType.STRANGER, aiName);
             broadcastData({ type: 'message', text: response, username: aiName });
             
@@ -363,7 +388,7 @@ const App: React.FC = () => {
             const greeting = await sendMessageToGemini(`(System: New user ${prefs.username} joined. Greet them.)`);
             setIsLocalTyping(false);
             
-            const aiName = prefs.mood === 'FUNNY' ? 'Lala' : 'Bot';
+            const aiName = getAiName(prefs.mood);
             addMessage(greeting, SenderType.STRANGER, aiName);
         }
     }, 1500);
@@ -401,7 +426,7 @@ const App: React.FC = () => {
         setTimeout(async () => {
             const res = await sendMessageToGemini(`${prefs.username}: ${text}`);
             setIsLocalTyping(false);
-            const aiName = prefs.mood === 'FUNNY' ? 'Lala' : 'Bot';
+            const aiName = getAiName(prefs.mood);
             addMessage(res, SenderType.STRANGER, aiName);
             if (prefs.voiceEnabled) {
                 const audio = await generateSpeech(res, prefs.mood);
@@ -464,60 +489,93 @@ const App: React.FC = () => {
       {/* Header */}
       <header className="px-4 py-3 bg-void-black/80 backdrop-blur border-b border-white/5 flex justify-between items-center z-20">
          <div className="flex items-center gap-3">
-             <div className="w-2 h-2 rounded-full bg-neon-green animate-pulse"></div>
+             <div
+               className={`w-2 h-2 rounded-full ${status === ConnectionStatus.CONNECTED ? 'bg-neon-green animate-pulse' : 'bg-red-500'}`}
+               aria-label={status === ConnectionStatus.CONNECTED ? 'Connected' : 'Disconnected'}
+             />
              <div>
                 <h2 className="font-bold text-sm tracking-wide">{mode === 'P2P' ? 'GROUP CHANNEL' : 'SECURE UPLINK'}</h2>
-                <div className="flex gap-2 text-[10px] font-mono text-zinc-500">
+                <div className="flex gap-2 text-[10px] font-mono text-zinc-500" aria-label={`Mood: ${prefs.mood}, Language: ${prefs.language}`}>
                     <span>{prefs.mood}</span>
                     <span className="text-zinc-700">|</span>
                     <span>{prefs.language}</span>
                     {mode === 'P2P' && (
                       <>
                         <span className="text-zinc-700">|</span>
-                        <span>{participants.length} NODE{participants.length === 1 ? '' : 'S'}</span>
+                        <span aria-label={`${participants.length} participants`}>{participants.length} NODE{participants.length === 1 ? '' : 'S'}</span>
                       </>
                     )}
                 </div>
              </div>
          </div>
          <div className="flex gap-2">
-            <button onClick={() => setShowSettings(true)} className="p-2 bg-zinc-900 rounded-full text-zinc-400 hover:text-white transition-colors">
+            <button
+              onClick={() => setShowSettings(true)}
+              className="p-2 bg-zinc-900 rounded-full text-zinc-400 hover:text-white transition-colors"
+              aria-label="Open settings"
+              title="Settings"
+            >
                 <Settings size={18} />
             </button>
             {mode === 'P2P' && (
-                <button 
+                <button
                     onClick={() => {
                         if (peerId) {
                             navigator.clipboard.writeText(`${window.location.origin}?join=${peerId}`);
                             setShowInviteToast(true);
                             setTimeout(() => setShowInviteToast(false), 2000);
                         }
-                    }} 
+                    }}
                     className="p-2 bg-zinc-900 rounded-full text-neon-green hover:bg-neon-green/10 transition-colors relative"
+                    aria-label="Copy invite link"
+                    title="Copy invite link"
                 >
                     <Users size={18} />
-                    {showInviteToast && <div className="absolute top-10 right-0 bg-neon-green text-black text-[10px] px-2 py-1 rounded font-bold whitespace-nowrap">LINK COPIED</div>}
+                    {showInviteToast && (
+                      <div className="absolute top-10 right-0 bg-neon-green text-black text-[10px] px-2 py-1 rounded font-bold whitespace-nowrap" role="status">
+                        LINK COPIED
+                      </div>
+                    )}
                 </button>
             )}
-            <button onClick={handleDisconnect} className="p-2 bg-red-500/10 text-red-500 rounded-full hover:bg-red-500 hover:text-white transition-colors">
+            <button
+              onClick={handleDisconnect}
+              className="p-2 bg-red-500/10 text-red-500 rounded-full hover:bg-red-500 hover:text-white transition-colors"
+              aria-label="Disconnect and return to lobby"
+              title="Disconnect"
+            >
                 <Power size={18} />
             </button>
          </div>
       </header>
 
       {/* Messages Area */}
-      <div className="flex-1 overflow-y-auto px-4 pt-4 pb-20 scroll-smooth z-10">
-         {status !== ConnectionStatus.CONNECTED && (
+      <div className="flex-1 overflow-y-auto px-4 pt-4 pb-20 scroll-smooth z-10" role="log" aria-label="Chat messages" aria-live="polite">
+         {status === ConnectionStatus.DISCONNECTED && (
              <div className="flex flex-col items-center justify-center h-full text-zinc-500 font-mono text-xs gap-4">
-                 <div className="w-8 h-8 border-2 border-neon-green border-t-transparent rounded-full animate-spin"></div>
-                 <EncryptionEffect text="ESTABLISHING CONNECTION..." />
+                 <div className="text-red-400 text-center">
+                   <p className="text-sm font-bold mb-2">CONNECTION LOST</p>
+                   <p className="text-xs text-zinc-600 mb-4">The peer disconnected or could not be reached.</p>
+                   <button
+                     onClick={handleDisconnect}
+                     className="border border-neon-green text-neon-green px-4 py-2 rounded-lg hover:bg-neon-green hover:text-black transition-all text-xs"
+                   >
+                     RETURN TO LOBBY
+                   </button>
+                 </div>
              </div>
          )}
-         
+         {(status === ConnectionStatus.SEARCHING || status === ConnectionStatus.WAITING_FOR_PEER) && (
+             <div className="flex flex-col items-center justify-center h-full text-zinc-500 font-mono text-xs gap-4" aria-live="polite">
+                 <div className="w-8 h-8 border-2 border-neon-green border-t-transparent rounded-full animate-spin" role="status" aria-label="Connecting…"></div>
+                 <EncryptionEffect text={status === ConnectionStatus.WAITING_FOR_PEER ? 'AWAITING PEER...' : 'ESTABLISHING CONNECTION...'} />
+             </div>
+         )}
+
          <div className="max-w-2xl mx-auto flex flex-col justify-end min-h-full">
             {messages.map(msg => <ChatMessage key={msg.id} message={msg} />)}
             {(isLocalTyping || isRemoteTyping) && (
-                <div className="text-[10px] text-zinc-600 font-mono animate-pulse ml-4 mb-4">
+                <div className="text-[10px] text-zinc-600 font-mono animate-pulse ml-4 mb-4" role="status" aria-live="polite">
                     {isRemoteTyping ? 'Signal detected...' : 'Computing...'}
                 </div>
             )}
@@ -527,25 +585,36 @@ const App: React.FC = () => {
 
       {/* Input Area */}
       <div className="bg-void-black/90 backdrop-blur-xl border-t border-white/10 p-4 sticky bottom-0 z-20">
-         <form onSubmit={handleSendMessage} className="max-w-2xl mx-auto flex gap-3 items-center">
-            
+         <form onSubmit={handleSendMessage} className="max-w-2xl mx-auto flex gap-3 items-center" role="search" aria-label="Message input">
+
             {/* Mic Button */}
-            <button 
+            <button
                 type="button"
                 onClick={toggleListening}
                 className={`p-3 rounded-xl transition-all ${isListening ? 'bg-red-500/20 text-red-500 animate-pulse' : 'bg-zinc-900 text-zinc-400 hover:text-white'}`}
+                aria-label={isListening ? 'Stop voice input' : 'Start voice input'}
+                aria-pressed={isListening}
+                title={isListening ? 'Stop listening' : 'Voice input'}
             >
-                {isListening ? <Loader2 size={20} className="animate-spin" /> : <Mic size={20} />}
+                {isListening ? <Loader2 size={20} className="animate-spin" aria-hidden="true" /> : <Mic size={20} aria-hidden="true" />}
             </button>
 
-            <input 
+            <input
                 value={inputText}
                 onChange={handleTyping}
                 placeholder={isListening ? "Listening..." : "Broadcast message..."}
                 className="flex-1 bg-zinc-900 border border-zinc-800 rounded-xl px-4 py-3 text-sm text-zinc-100 outline-none focus:border-zinc-600 transition-all placeholder:text-zinc-600"
+                aria-label="Message"
+                disabled={status !== ConnectionStatus.CONNECTED}
             />
-            <button disabled={!inputText.trim()} type="submit" className="bg-neon-green text-black p-3 rounded-xl hover:scale-105 disabled:opacity-50 disabled:scale-100 transition-all">
-                <Send size={20} />
+            <button
+              disabled={!inputText.trim() || status !== ConnectionStatus.CONNECTED}
+              type="submit"
+              className="bg-neon-green text-black p-3 rounded-xl hover:scale-105 disabled:opacity-50 disabled:scale-100 transition-all"
+              aria-label="Send message"
+              title="Send"
+            >
+                <Send size={20} aria-hidden="true" />
             </button>
          </form>
       </div>
