@@ -185,7 +185,7 @@ export const LandingPage: React.FC<LandingPageProps> = ({
             <FeatureCard
               icon={<Cpu size={24} />} iconBg="bg-neon-purple/10 text-neon-purple"
               title="Neural AI Core"
-              desc="Powered by Gemini 2.0. Context-aware conversations with 5 adaptive personalities."
+              desc="Powered by Gemini 1.5 Flash. Context-aware conversations with 5 adaptive personalities."
             />
             <FeatureCard
               icon={<Zap size={24} />} iconBg="bg-yellow-500/10 text-yellow-400"
