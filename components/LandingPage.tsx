@@ -45,20 +45,41 @@ export const LandingPage: React.FC<LandingPageProps> = ({
            </div>
 
            <div className="w-full space-y-4 bg-void-dark/50 p-6 rounded-2xl border border-white/5 backdrop-blur-sm">
-              <input 
-                value={username} 
-                onChange={(e) => setUsername(e.target.value)}
-                placeholder="ENTER CODENAME"
-                maxLength={12}
-                className="w-full bg-zinc-900/80 border border-zinc-700 text-center py-4 rounded-xl text-zinc-100 font-mono tracking-widest outline-none focus:border-neon-green focus:bg-zinc-900 transition-all placeholder:text-zinc-600"
-              />
-              
+              <div className="relative">
+                <input
+                  value={username}
+                  onChange={(e) => setUsername(e.target.value)}
+                  placeholder="ENTER CODENAME"
+                  maxLength={12}
+                  className="w-full bg-zinc-900/80 border border-zinc-700 text-center py-4 rounded-xl text-zinc-100 font-mono tracking-widest outline-none focus:border-neon-green focus:bg-zinc-900 transition-all placeholder:text-zinc-600"
+                  aria-label="Your codename"
+                  aria-describedby="username-hint"
+                />
+                <span
+                  id="username-hint"
+                  className={`absolute bottom-2 right-3 text-[9px] font-mono ${username.length >= 10 ? 'text-yellow-500' : 'text-zinc-700'}`}
+                  aria-live="polite"
+                >
+                  {username.length}/12
+                </span>
+              </div>
+
               <div className="grid grid-cols-2 gap-3">
-                 <button onClick={() => onEnter('AI')} disabled={!username} className="bg-zinc-100 text-black py-4 rounded-xl font-bold hover:scale-[1.02] active:scale-95 transition-all disabled:opacity-50 flex flex-col items-center gap-1">
+                 <button
+                   onClick={() => onEnter('AI')}
+                   disabled={!username.trim()}
+                   className="bg-zinc-100 text-black py-4 rounded-xl font-bold hover:scale-[1.02] active:scale-95 transition-all disabled:opacity-50 flex flex-col items-center gap-1"
+                   aria-label="Enter solo AI chat mode"
+                 >
                     <span>SOLO LINK</span>
                     <span className="text-[10px] font-normal opacity-60">AI COMPANION</span>
                  </button>
-                 <button onClick={() => onEnter('P2P')} disabled={!username} className="bg-neon-green text-black py-4 rounded-xl font-bold hover:scale-[1.02] active:scale-95 transition-all disabled:opacity-50 flex flex-col items-center gap-1">
+                 <button
+                   onClick={() => onEnter('P2P')}
+                   disabled={!username.trim()}
+                   className="bg-neon-green text-black py-4 rounded-xl font-bold hover:scale-[1.02] active:scale-95 transition-all disabled:opacity-50 flex flex-col items-center gap-1"
+                   aria-label="Enter group P2P chat mode"
+                 >
                     <span>GROUP LINK</span>
                     <span className="text-[10px] font-normal opacity-60">P2P ENCRYPTED</span>
                  </button>
@@ -94,7 +115,7 @@ export const LandingPage: React.FC<LandingPageProps> = ({
             <FeatureCard 
               icon={<Cpu className="text-neon-purple" size={32} />}
               title="Neural AI Core"
-              desc="Powered by Gemini 1.5 Flash. Experience context-aware conversations with adaptive personalities."
+              desc="Powered by Gemini 2.0. Experience context-aware conversations with adaptive personalities."
             />
             <FeatureCard 
               icon={<Zap className="text-yellow-500" size={32} />}

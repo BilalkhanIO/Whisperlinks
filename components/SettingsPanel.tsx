@@ -1,4 +1,4 @@
-import React from 'react';
+import React, { useEffect, useRef } from 'react';
 import { ChatLanguage, ChatMood } from '../types';
 import { LANGUAGE_PROMPTS, MOOD_INSTRUCTIONS } from '../constants';
 import { getFlag } from '../utils';
@@ -20,51 +20,89 @@ interface SettingsPanelProps {
 export const SettingsPanel: React.FC<SettingsPanelProps> = ({
   isOpen, onClose, currentLang, setLang, currentMood, setMood, sfx, toggleSfx, voice, toggleVoice
 }) => {
+  const closeButtonRef = useRef<HTMLButtonElement>(null);
+
+  useEffect(() => {
+    if (isOpen) closeButtonRef.current?.focus();
+  }, [isOpen]);
+
+  useEffect(() => {
+    const handleKeyDown = (e: KeyboardEvent) => {
+      if (e.key === 'Escape' && isOpen) onClose();
+    };
+    window.addEventListener('keydown', handleKeyDown);
+    return () => window.removeEventListener('keydown', handleKeyDown);
+  }, [isOpen, onClose]);
+
   return (
     <>
       {/* Backdrop */}
-      <div 
+      <div
         className={`fixed inset-0 bg-black/60 backdrop-blur-sm z-40 transition-opacity duration-300 ${isOpen ? 'opacity-100 pointer-events-auto' : 'opacity-0 pointer-events-none'}`}
         onClick={onClose}
+        aria-hidden="true"
       />
-      
+
       {/* Drawer */}
-      <div className={`fixed inset-x-0 bottom-0 z-50 bg-void-dark border-t border-void-gray rounded-t-3xl shadow-2xl transform transition-transform duration-300 ease-out max-h-[85vh] overflow-y-auto ${isOpen ? 'translate-y-0' : 'translate-y-full'}`}>
+      <div
+        className={`fixed inset-x-0 bottom-0 z-50 bg-void-dark border-t border-void-gray rounded-t-3xl shadow-2xl transform transition-transform duration-300 ease-out max-h-[85vh] overflow-y-auto ${isOpen ? 'translate-y-0' : 'translate-y-full'}`}
+        role="dialog"
+        aria-modal="true"
+        aria-label="Settings"
+        aria-hidden={!isOpen}
+      >
         <div className="p-6 space-y-6">
-          
+
           {/* Header */}
           <div className="flex justify-between items-center pb-4 border-b border-white/5">
             <h2 className="text-xl font-bold flex items-center gap-2">
-              <Settings className="text-neon-green" /> Configuration
+              <Settings className="text-neon-green" aria-hidden="true" /> Configuration
             </h2>
-            <button onClick={onClose} className="p-2 bg-zinc-800 rounded-full hover:bg-zinc-700">
-              <X size={20} />
+            <button
+              ref={closeButtonRef}
+              onClick={onClose}
+              className="p-2 bg-zinc-800 rounded-full hover:bg-zinc-700"
+              aria-label="Close settings"
+            >
+              <X size={20} aria-hidden="true" />
             </button>
           </div>
 
           {/* Toggles */}
           <div className="grid grid-cols-2 gap-4">
-             <button onClick={toggleSfx} className={`p-4 rounded-xl border flex flex-col items-center gap-2 transition-all ${sfx ? 'bg-neon-green/10 border-neon-green text-neon-green' : 'bg-zinc-900 border-zinc-700 text-zinc-500'}`}>
-                <Volume2 size={24} />
+             <button
+               onClick={toggleSfx}
+               className={`p-4 rounded-xl border flex flex-col items-center gap-2 transition-all ${sfx ? 'bg-neon-green/10 border-neon-green text-neon-green' : 'bg-zinc-900 border-zinc-700 text-zinc-500'}`}
+               aria-pressed={sfx}
+               aria-label={`Sound effects ${sfx ? 'on' : 'off'}`}
+             >
+                <Volume2 size={24} aria-hidden="true" />
                 <span className="text-xs font-bold">SFX: {sfx ? 'ON' : 'OFF'}</span>
              </button>
-             <button onClick={toggleVoice} className={`p-4 rounded-xl border flex flex-col items-center gap-2 transition-all ${voice ? 'bg-neon-purple/10 border-neon-purple text-neon-purple' : 'bg-zinc-900 border-zinc-700 text-zinc-500'}`}>
-                <Mic size={24} />
+             <button
+               onClick={toggleVoice}
+               className={`p-4 rounded-xl border flex flex-col items-center gap-2 transition-all ${voice ? 'bg-neon-purple/10 border-neon-purple text-neon-purple' : 'bg-zinc-900 border-zinc-700 text-zinc-500'}`}
+               aria-pressed={voice}
+               aria-label={`Voice output ${voice ? 'on' : 'off'}`}
+             >
+                <Mic size={24} aria-hidden="true" />
                 <span className="text-xs font-bold">VOICE: {voice ? 'ON' : 'OFF'}</span>
              </button>
           </div>
 
           {/* Languages */}
           <div>
-            <h3 className="text-sm font-mono text-zinc-400 mb-3 uppercase tracking-wider">Communication Protocol</h3>
-            <div className="grid grid-cols-2 sm:grid-cols-4 gap-2">
+            <h3 className="text-sm font-mono text-zinc-400 mb-3 uppercase tracking-wider" id="lang-label">Communication Protocol</h3>
+            <div className="grid grid-cols-2 sm:grid-cols-4 gap-2" role="radiogroup" aria-labelledby="lang-label">
               {Object.keys(LANGUAGE_PROMPTS).map((lang) => (
                 <button
                   key={lang}
                   onClick={() => setLang(lang as ChatLanguage)}
                   className={`p-3 rounded-lg text-sm font-medium border transition-all flex items-center gap-2 ${currentLang === lang ? 'bg-zinc-100 text-black border-white' : 'bg-zinc-900 text-zinc-400 border-zinc-800 hover:border-zinc-600'}`}
+                  role="radio"
+                  aria-checked={currentLang === lang}
                 >
-                  <span>{getFlag(lang as ChatLanguage)}</span>
+                  <span aria-hidden="true">{getFlag(lang as ChatLanguage)}</span>
                   {lang.replace('_', ' ')}
                 </button>
               ))}
@@ -73,25 +111,27 @@ export const SettingsPanel: React.FC<SettingsPanelProps> = ({
 
           {/* Moods */}
           <div>
-            <h3 className="text-sm font-mono text-zinc-400 mb-3 uppercase tracking-wider">AI Personality Core</h3>
-            <div className="grid grid-cols-1 sm:grid-cols-2 gap-2">
+            <h3 className="text-sm font-mono text-zinc-400 mb-3 uppercase tracking-wider" id="mood-label">AI Personality Core</h3>
+            <div className="grid grid-cols-1 sm:grid-cols-2 gap-2" role="radiogroup" aria-labelledby="mood-label">
               {Object.keys(MOOD_INSTRUCTIONS).map((m) => (
                 <button
                   key={m}
                   onClick={() => setMood(m as ChatMood)}
                   className={`p-3 rounded-lg text-sm font-bold border transition-all text-left ${currentMood === m ? 'bg-gradient-to-r from-neon-green/20 to-transparent border-neon-green text-neon-green' : 'bg-zinc-900 text-zinc-400 border-zinc-800'}`}
+                  role="radio"
+                  aria-checked={currentMood === m}
                 >
                   {m.replace('_', ' ')}
                 </button>
               ))}
             </div>
           </div>
-          
-          <div className="h-6"></div> {/* Safe area */}
-          
+
+          <div className="h-6"></div>
+
           <div className="text-center text-[10px] text-zinc-600 pt-4 border-t border-white/5">
             <a href="/privacy-policy" target="_blank" rel="noopener noreferrer" className="hover:text-zinc-400 transition-colors">Privacy Policy</a>
-            <span className="mx-2">•</span>
+            <span className="mx-2" aria-hidden="true">•</span>
             <a href="/help" target="_blank" rel="noopener noreferrer" className="hover:text-zinc-400 transition-colors">Help Center</a>
           </div>
         </div>
