@@ -35,14 +35,20 @@ export const loadPrefs = (): UserPrefs => {
 
 export const getFlag = (lang: ChatLanguage) => {
   switch (lang) {
-    case 'ENGLISH': return '🇬🇧';
+    case 'ENGLISH':    return '🇬🇧';
     case 'ROMAN_URDU': return '🇵🇰';
-    case 'SPANISH': return '🇪🇸';
-    case 'FRENCH': return '🇫🇷';
-    case 'GERMAN': return '🇩🇪';
-    case 'JAPANESE': return '🇯🇵';
-    case 'ARABIC': return '🇸🇦';
-    case 'HINDI': return '🇮🇳';
-    default: return '🌐';
+    case 'SPANISH':    return '🇪🇸';
+    case 'FRENCH':     return '🇫🇷';
+    case 'GERMAN':     return '🇩🇪';
+    case 'JAPANESE':   return '🇯🇵';
+    case 'ARABIC':     return '🇸🇦';
+    case 'HINDI':      return '🇮🇳';
+    default:           return '🌐';
   }
+};
+
+export const getInitials = (name: string): string => {
+  const clean = name.trim();
+  if (!clean) return '?';
+  return clean.slice(0, 2).toUpperCase();
 };

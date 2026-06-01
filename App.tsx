@@ -8,7 +8,10 @@ import { EncryptionEffect } from './components/EncryptionEffect';
 import MatrixRain from './components/MatrixRain';
 import { SettingsPanel } from './components/SettingsPanel';
 import { loadPrefs, savePrefs } from './utils';
-import { Send, Power, Users, Settings, Mic, Loader2 } from 'lucide-react';
+import { COMMANDS, MOOD_META } from './constants';
+import { Send, Power, Users, Settings, Mic, Loader2, Terminal } from 'lucide-react';
+
+const MAX_MSG_LENGTH = 500;
 
 import { LandingPage } from './components/LandingPage';
 import { AboutPage, ContactPage, HelpPage, PrivacyPolicy, TermsPage } from './components/ContentPages';
@@ -59,6 +62,7 @@ const App: React.FC = () => {
   const [isRemoteTyping, setIsRemoteTyping] = useState(false);
   const [showSettings, setShowSettings] = useState(false);
   const [showInviteToast, setShowInviteToast] = useState(false);
+  const [showCommandHints, setShowCommandHints] = useState(false);
   const [peerId, setPeerId] = useState<string | null>(null);
   
   // Voice Input State
@@ -409,11 +413,61 @@ const App: React.FC = () => {
 
   const handleSendMessage = (e?: React.FormEvent) => {
     e?.preventDefault();
-    if (!inputText.trim()) return;
-    
-    if (prefs.sfxEnabled) playSound('send');
     const text = inputText.trim();
+    if (!text) return;
+
     setInputText('');
+    setShowCommandHints(false);
+
+    // ── Command handling ──
+    if (text.startsWith('/')) {
+      const cmd = text.toLowerCase().split(' ')[0];
+
+      if (cmd === '/clear') {
+        setMessages([]);
+        addMessage('CHAT CLEARED', SenderType.SYSTEM);
+        return;
+      }
+
+      if (cmd === '/help') {
+        addMessage(
+          `COMMANDS: ${COMMANDS.map(c => c.cmd).join(' · ')}`,
+          SenderType.SYSTEM,
+        );
+        return;
+      }
+
+      if (cmd === '/roast') {
+        if (prefs.sfxEnabled) playSound('send');
+        if (mode === 'P2P') {
+          triggerGroupAI(`/roast ${prefs.username} — be savage`, prefs.username);
+        } else {
+          setIsLocalTyping(true);
+          sendMessageToGemini(`/roast the user "${prefs.username}" — make it personal and funny`).then(res => {
+            setIsLocalTyping(false);
+            addMessage(res, SenderType.STRANGER, getAiName(prefs.mood));
+          });
+        }
+        return;
+      }
+
+      if (cmd === '/vibe') {
+        if (prefs.sfxEnabled) playSound('send');
+        if (mode === 'P2P') {
+          triggerGroupAI('/vibe — give a quick vibe-check of this conversation', prefs.username);
+        } else {
+          setIsLocalTyping(true);
+          sendMessageToGemini('Do a quick vibe-check on our conversation so far. Be brief and in-character.').then(res => {
+            setIsLocalTyping(false);
+            addMessage(res, SenderType.STRANGER, getAiName(prefs.mood));
+          });
+        }
+        return;
+      }
+    }
+
+    // ── Normal message ──
+    if (prefs.sfxEnabled) playSound('send');
     addMessage(text, SenderType.USER, prefs.username);
     lastActivityTimeRef.current = Date.now();
 
@@ -421,7 +475,6 @@ const App: React.FC = () => {
         broadcastData({ type: 'message', text, username: prefs.username });
         if (isHostRef.current) scheduleSmartResponse(text, prefs.username);
     } else {
-        // Solo Mode
         setIsLocalTyping(true);
         setTimeout(async () => {
             const res = await sendMessageToGemini(`${prefs.username}: ${text}`);
@@ -437,13 +490,15 @@ const App: React.FC = () => {
   };
 
   const handleTyping = (e: React.ChangeEvent<HTMLInputElement>) => {
-    setInputText(e.target.value);
-    
+    const val = e.target.value;
+    if (val.length > MAX_MSG_LENGTH) return;
+    setInputText(val);
+    setShowCommandHints(val === '/' || (val.startsWith('/') && !val.includes(' ')));
+
     if (typingTimeoutRef.current) clearTimeout(typingTimeoutRef.current);
-    
+
     if (mode === 'P2P') {
-        broadcastData({ type: 'typing' }); // Send single ping
-        // Debounce actual logic updates if needed
+        broadcastData({ type: 'typing' });
     }
   };
 
@@ -487,66 +542,75 @@ const App: React.FC = () => {
       <MatrixRain />
       
       {/* Header */}
-      <header className="px-4 py-3 bg-void-black/80 backdrop-blur border-b border-white/5 flex justify-between items-center z-20">
-         <div className="flex items-center gap-3">
-             <div
-               className={`w-2 h-2 rounded-full ${status === ConnectionStatus.CONNECTED ? 'bg-neon-green animate-pulse' : 'bg-red-500'}`}
-               aria-label={status === ConnectionStatus.CONNECTED ? 'Connected' : 'Disconnected'}
-             />
-             <div>
-                <h2 className="font-bold text-sm tracking-wide">{mode === 'P2P' ? 'GROUP CHANNEL' : 'SECURE UPLINK'}</h2>
-                <div className="flex gap-2 text-[10px] font-mono text-zinc-500" aria-label={`Mood: ${prefs.mood}, Language: ${prefs.language}`}>
-                    <span>{prefs.mood}</span>
-                    <span className="text-zinc-700">|</span>
-                    <span>{prefs.language}</span>
-                    {mode === 'P2P' && (
-                      <>
-                        <span className="text-zinc-700">|</span>
-                        <span aria-label={`${participants.length} participants`}>{participants.length} NODE{participants.length === 1 ? '' : 'S'}</span>
-                      </>
-                    )}
+      <header className="px-4 py-3 bg-void-black/90 backdrop-blur-xl border-b border-white/[0.06] flex justify-between items-center z-20">
+        <div className="flex items-center gap-3">
+          <div className="flex items-center gap-2">
+            <div
+              className={`w-2 h-2 rounded-full shrink-0 ${status === ConnectionStatus.CONNECTED ? 'bg-neon-green animate-pulse' : 'bg-red-500'}`}
+              aria-label={status === ConnectionStatus.CONNECTED ? 'Connected' : 'Disconnected'}
+            />
+            <div>
+              <div className="flex items-center gap-2">
+                <h2 className="font-bold text-sm text-zinc-200">
+                  {mode === 'P2P' ? 'Group Channel' : 'Secure Uplink'}
+                </h2>
+                {/* Persona badge */}
+                <span className="hidden sm:flex items-center gap-1 bg-void-dark border border-white/8 rounded-full px-2 py-0.5 text-[10px]">
+                  <span aria-hidden="true">{MOOD_META[prefs.mood].emoji}</span>
+                  <span className="text-zinc-400 font-mono">{MOOD_META[prefs.mood].name}</span>
+                </span>
+              </div>
+              <div className="flex gap-1.5 text-[10px] font-mono text-zinc-600 mt-0.5">
+                <span>{prefs.language.replace('_', ' ')}</span>
+                {mode === 'P2P' && (
+                  <>
+                    <span>·</span>
+                    <span aria-label={`${participants.length} participants`}>
+                      {participants.length} {participants.length === 1 ? 'node' : 'nodes'}
+                    </span>
+                  </>
+                )}
+              </div>
+            </div>
+          </div>
+        </div>
+
+        <div className="flex gap-1.5">
+          <button
+            onClick={() => setShowSettings(true)}
+            className="p-2 rounded-xl text-zinc-500 hover:text-zinc-200 hover:bg-white/5 transition-all"
+            aria-label="Open settings" title="Settings"
+          >
+            <Settings size={17} />
+          </button>
+          {mode === 'P2P' && (
+            <button
+              onClick={() => {
+                if (peerId) {
+                  navigator.clipboard.writeText(`${window.location.origin}?join=${peerId}`);
+                  setShowInviteToast(true);
+                  setTimeout(() => setShowInviteToast(false), 2500);
+                }
+              }}
+              className="p-2 rounded-xl text-neon-green hover:bg-neon-green/10 transition-all relative"
+              aria-label="Copy invite link" title="Copy invite link"
+            >
+              <Users size={17} />
+              {showInviteToast && (
+                <div className="absolute top-10 right-0 bg-neon-green text-black text-[10px] px-2.5 py-1 rounded-lg font-bold whitespace-nowrap shadow-lg" role="status">
+                  Link copied!
                 </div>
-             </div>
-         </div>
-         <div className="flex gap-2">
-            <button
-              onClick={() => setShowSettings(true)}
-              className="p-2 bg-zinc-900 rounded-full text-zinc-400 hover:text-white transition-colors"
-              aria-label="Open settings"
-              title="Settings"
-            >
-                <Settings size={18} />
+              )}
             </button>
-            {mode === 'P2P' && (
-                <button
-                    onClick={() => {
-                        if (peerId) {
-                            navigator.clipboard.writeText(`${window.location.origin}?join=${peerId}`);
-                            setShowInviteToast(true);
-                            setTimeout(() => setShowInviteToast(false), 2000);
-                        }
-                    }}
-                    className="p-2 bg-zinc-900 rounded-full text-neon-green hover:bg-neon-green/10 transition-colors relative"
-                    aria-label="Copy invite link"
-                    title="Copy invite link"
-                >
-                    <Users size={18} />
-                    {showInviteToast && (
-                      <div className="absolute top-10 right-0 bg-neon-green text-black text-[10px] px-2 py-1 rounded font-bold whitespace-nowrap" role="status">
-                        LINK COPIED
-                      </div>
-                    )}
-                </button>
-            )}
-            <button
-              onClick={handleDisconnect}
-              className="p-2 bg-red-500/10 text-red-500 rounded-full hover:bg-red-500 hover:text-white transition-colors"
-              aria-label="Disconnect and return to lobby"
-              title="Disconnect"
-            >
-                <Power size={18} />
-            </button>
-         </div>
+          )}
+          <button
+            onClick={handleDisconnect}
+            className="p-2 rounded-xl text-red-500/70 hover:text-red-400 hover:bg-red-500/10 transition-all"
+            aria-label="Disconnect and return to lobby" title="Disconnect"
+          >
+            <Power size={17} />
+          </button>
+        </div>
       </header>
 
       {/* Messages Area */}
@@ -584,39 +648,78 @@ const App: React.FC = () => {
       </div>
 
       {/* Input Area */}
-      <div className="bg-void-black/90 backdrop-blur-xl border-t border-white/10 p-4 sticky bottom-0 z-20">
-         <form onSubmit={handleSendMessage} className="max-w-2xl mx-auto flex gap-3 items-center" role="search" aria-label="Message input">
+      <div className="bg-void-black/95 backdrop-blur-xl border-t border-white/[0.06] px-4 pt-3 pb-4 sticky bottom-0 z-20">
+        <div className="max-w-2xl mx-auto">
 
-            {/* Mic Button */}
+          {/* Command hints panel */}
+          {showCommandHints && (
+            <div className="mb-2 bg-void-dark border border-white/10 rounded-xl overflow-hidden shadow-xl">
+              <div className="px-3 py-2 border-b border-white/5 flex items-center gap-2">
+                <Terminal size={11} className="text-neon-green" aria-hidden="true" />
+                <span className="text-[10px] font-mono text-zinc-500 uppercase tracking-wider">Commands</span>
+              </div>
+              {COMMANDS.filter(c => inputText === '/' || c.cmd.startsWith(inputText.toLowerCase())).map(({ cmd, desc, icon }) => (
+                <button
+                  key={cmd}
+                  type="button"
+                  onClick={() => { setInputText(cmd + ' '); setShowCommandHints(false); }}
+                  className="w-full flex items-center gap-3 px-3 py-2.5 hover:bg-white/5 transition-colors text-left"
+                >
+                  <span className="text-base w-5 text-center" aria-hidden="true">{icon}</span>
+                  <span className="font-mono text-sm text-neon-green">{cmd}</span>
+                  <span className="text-xs text-zinc-500">{desc}</span>
+                </button>
+              ))}
+            </div>
+          )}
+
+          <form onSubmit={handleSendMessage} className="flex gap-2.5 items-center" aria-label="Message input">
             <button
-                type="button"
-                onClick={toggleListening}
-                className={`p-3 rounded-xl transition-all ${isListening ? 'bg-red-500/20 text-red-500 animate-pulse' : 'bg-zinc-900 text-zinc-400 hover:text-white'}`}
-                aria-label={isListening ? 'Stop voice input' : 'Start voice input'}
-                aria-pressed={isListening}
-                title={isListening ? 'Stop listening' : 'Voice input'}
+              type="button"
+              onClick={toggleListening}
+              className={`p-2.5 rounded-xl transition-all shrink-0 ${isListening ? 'bg-red-500/15 text-red-400 animate-pulse' : 'bg-zinc-900/80 text-zinc-500 hover:text-zinc-300 border border-zinc-800'}`}
+              aria-label={isListening ? 'Stop voice input' : 'Start voice input'}
+              aria-pressed={isListening}
+              title={isListening ? 'Stop listening' : 'Voice input'}
             >
-                {isListening ? <Loader2 size={20} className="animate-spin" aria-hidden="true" /> : <Mic size={20} aria-hidden="true" />}
+              {isListening
+                ? <Loader2 size={18} className="animate-spin" aria-hidden="true" />
+                : <Mic size={18} aria-hidden="true" />
+              }
             </button>
 
-            <input
+            <div className="relative flex-1">
+              <input
                 value={inputText}
                 onChange={handleTyping}
-                placeholder={isListening ? "Listening..." : "Broadcast message..."}
-                className="flex-1 bg-zinc-900 border border-zinc-800 rounded-xl px-4 py-3 text-sm text-zinc-100 outline-none focus:border-zinc-600 transition-all placeholder:text-zinc-600"
+                onKeyDown={(e) => e.key === 'Escape' && setShowCommandHints(false)}
+                placeholder={isListening ? 'Listening…' : 'Message or type / for commands'}
+                className="w-full bg-zinc-900/80 border border-zinc-800 rounded-xl px-4 py-2.5 text-sm text-zinc-100 outline-none focus:border-zinc-600/80 transition-all placeholder:text-zinc-600 pr-12"
                 aria-label="Message"
                 disabled={status !== ConnectionStatus.CONNECTED}
-            />
+              />
+              {/* Character counter */}
+              {inputText.length > MAX_MSG_LENGTH * 0.7 && (
+                <span
+                  className={`absolute right-3 top-1/2 -translate-y-1/2 text-[9px] font-mono tabular-nums ${inputText.length >= MAX_MSG_LENGTH ? 'text-red-400' : 'text-yellow-500'}`}
+                  aria-live="polite"
+                >
+                  {MAX_MSG_LENGTH - inputText.length}
+                </span>
+              )}
+            </div>
+
             <button
               disabled={!inputText.trim() || status !== ConnectionStatus.CONNECTED}
               type="submit"
-              className="bg-neon-green text-black p-3 rounded-xl hover:scale-105 disabled:opacity-50 disabled:scale-100 transition-all"
+              className="bg-neon-green text-black p-2.5 rounded-xl hover:bg-green-400 disabled:opacity-40 disabled:cursor-not-allowed transition-all shrink-0"
               aria-label="Send message"
               title="Send"
             >
-                <Send size={20} aria-hidden="true" />
+              <Send size={18} aria-hidden="true" />
             </button>
-         </form>
+          </form>
+        </div>
       </div>
 
       <SettingsPanel 
