@@ -21,7 +21,7 @@ export const initializeChatSession = async (mood: ChatMood, lang: ChatLanguage):
   const systemInstruction = MOOD_INSTRUCTIONS[mood](langPrompt);
 
   chatSession = client.chats.create({
-    model: "gemini-2.0-flash",
+    model: "gemini-1.5-flash",
     config: {
       systemInstruction: systemInstruction,
       temperature: mood === 'FACT_CHECK' ? 0.3 : 1.1, // Low temp for facts, high for fun
