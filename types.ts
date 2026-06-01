@@ -1,6 +1,6 @@
 export enum SenderType {
   USER = 'USER',
-  STRANGER = 'STRANGER', // AI or Peer
+  STRANGER = 'STRANGER',
   SYSTEM = 'SYSTEM'
 }
 
@@ -11,6 +11,10 @@ export interface Message {
   username?: string;
   timestamp: Date;
   isEncrypted?: boolean;
+  isStreaming?: boolean;
+  replyTo?: { id: string; text: string; username?: string };
+  reactions?: Record<string, string[]>;
+  expiresAt?: number;
 }
 
 export interface UserInfo {
