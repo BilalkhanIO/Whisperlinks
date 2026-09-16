@@ -15,12 +15,43 @@ export interface Message {
   replyTo?: { id: string; text: string; username?: string };
   reactions?: Record<string, string[]>;
   expiresAt?: number;
+  status?: 'sent' | 'delivered';
+  type?: 'text' | 'voice' | 'file' | 'image' | 'poll';
+  voiceData?: {
+    duration: number;
+    dataUrl: string;
+  };
+  fileData?: {
+    name: string;
+    size: number;
+    mimeType: string;
+    dataUrl: string;
+  };
+  pollData?: {
+    id: string;
+    question: string;
+    options: { text: string; votes: string[] }[];
+    creator: string;
+    totalVotes: number;
+  };
+}
+
+export interface ModerationSettings {
+  allowFileSharing: boolean;
+  allowVoice: boolean;
+  allowAI: boolean;
+  isLocked: boolean;
 }
 
 export interface UserInfo {
   peerId: string;
   username: string;
   isHost: boolean;
+  whisperId?: string;
+  shortTag?: string;
+  hexFingerprint?: string;
+  verified?: boolean;
+  isTrusted?: boolean;
 }
 
 export enum ConnectionStatus {

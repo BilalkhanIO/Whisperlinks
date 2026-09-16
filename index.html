@@ -27,93 +27,32 @@
     <meta name="twitter:image" content="/icons/icon-512.png" />
 
     <title>WhisperLink | Private Chat And AI Conversations</title>
+    <link rel="canonical" href="https://whisperlinks.app/" />
+
+    <!-- Structured Data -->
+    <script type="application/ld+json">
+    {
+      "@context": "https://schema.org",
+      "@type": "WebSite",
+      "name": "WhisperLink",
+      "url": "https://whisperlinks.app/"
+    }
+    </script>
+    <script type="application/ld+json">
+    {
+      "@context": "https://schema.org",
+      "@type": "Organization",
+      "name": "WhisperLink",
+      "url": "https://whisperlinks.app/"
+    }
+    </script>
 
     <!-- Icons -->
     <link rel="icon" type="image/svg+xml" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'%3E%3Crect width='32' height='32' rx='8' fill='%2309090b'/%3E%3Ccircle cx='16' cy='16' r='13' fill='none' stroke='%2322c55e' stroke-width='1.5' opacity='0.3'/%3E%3Cpath d='M16 6c-4.97 0-9 3.58-9 8 0 2.76 1.48 5.2 3.75 6.7L10 26l3.5-2.1c.82.2 1.64.3 2.5.3 4.97 0 9-3.58 9-8s-4.03-8-9-8z' fill='%2322c55e' opacity='0.15'/%3E%3Cpath d='M16 7c-4.42 0-8 3.13-8 7 0 2.45 1.4 4.63 3.5 5.97L11 24l3-1.8c.64.15 1.3.23 2 .23 4.42 0 8-3.13 8-7s-3.58-7-8-7z' fill='none' stroke='%2322c55e' stroke-width='1.5' stroke-linejoin='round'/%3E%3Ccircle cx='12.5' cy='14' r='1.2' fill='%2322c55e'/%3E%3Ccircle cx='16' cy='14' r='1.2' fill='%2322c55e'/%3E%3Ccircle cx='19.5' cy='14' r='1.2' fill='%2322c55e'/%3E%3C/svg%3E">
     <link rel="apple-touch-icon" href="/icons/apple-touch-icon.png" />
     <link rel="apple-touch-icon" sizes="152x152" href="/icons/icon-152.png" />
     <link rel="apple-touch-icon" sizes="192x192" href="/icons/icon-192.png" />
-    <script src="https://cdn.tailwindcss.com"></script>
-    <script>
-      tailwind.config = {
-        darkMode: 'class',
-        theme: {
-          extend: {
-            colors: {
-              'void-black': '#09090b',
-              'void-dark': '#18181b',
-              'void-gray': '#27272a',
-              'neon-green': '#22c55e',
-              'neon-purple': '#a855f7',
-            },
-            fontFamily: {
-              mono: ['ui-monospace', 'SFMono-Regular', 'Menlo', 'Monaco', 'Consolas', "Liberation Mono", "Courier New", 'monospace'],
-            },
-            animation: {
-              'pulse-fast': 'pulse 1.5s cubic-bezier(0.4, 0, 0.6, 1) infinite',
-              'blink': 'blink 1s step-end infinite',
-            },
-            keyframes: {
-              blink: {
-                '0%, 100%': { opacity: '1' },
-                '50%': { opacity: '0' },
-              }
-            }
-          },
-        },
-      }
-    </script>
-    <style>
-      body {
-        background-color: #09090b;
-        color: #e4e4e7;
-      }
-      ::-webkit-scrollbar { width: 4px; }
-      ::-webkit-scrollbar-track { background: #09090b; }
-      ::-webkit-scrollbar-thumb { background: #27272a; border-radius: 4px; }
-      ::-webkit-scrollbar-thumb:hover { background: #3f3f46; }
-
-      /* Hide scrollbar but keep scrollability (persona row) */
-      .hide-scrollbar { -ms-overflow-style: none; scrollbar-width: none; }
-      .hide-scrollbar::-webkit-scrollbar { display: none; }
-
-      @keyframes glow-pulse {
-        0%, 100% { box-shadow: 0 0 20px rgba(34,197,94,0.15), 0 0 40px rgba(34,197,94,0.05); }
-        50%       { box-shadow: 0 0 35px rgba(34,197,94,0.35), 0 0 70px rgba(34,197,94,0.12); }
-      }
-      @keyframes float {
-        0%, 100% { transform: translateY(0px); }
-        50%       { transform: translateY(-5px); }
-      }
-      @keyframes slide-up {
-        from { opacity: 0; transform: translateY(16px); }
-        to   { opacity: 1; transform: translateY(0); }
-      }
-      .animate-glow  { animation: glow-pulse 3s ease-in-out infinite; }
-      .animate-float { animation: float 5s ease-in-out infinite; }
-      .animate-slide-up { animation: slide-up 0.4s ease-out forwards; }
-
-      /* Stagger helpers */
-      .delay-100 { animation-delay: 100ms; }
-      .delay-200 { animation-delay: 200ms; }
-      .delay-300 { animation-delay: 300ms; }
-      .delay-400 { animation-delay: 400ms; }
-    </style>
-  <script type="importmap">
-{
-  "imports": {
-    "react": "https://esm.sh/react@^19.2.4",
-    "react-dom/": "https://esm.sh/react-dom@^19.2.4/",
-    "react/": "https://esm.sh/react@^19.2.4/",
-    "@google/genai": "https://esm.sh/@google/genai@^1.41.0",
-    "lucide-react": "https://esm.sh/lucide-react@^0.564.0",
-    "vite": "https://esm.sh/vite@^7.3.1",
-    "@vitejs/plugin-react": "https://esm.sh/@vitejs/plugin-react@^5.1.4",
-    "peerjs": "https://esm.sh/peerjs@^1.5.5"
-  }
-}
-</script>
-</head>
+  </head>
   <body>
     <div id="root"></div>
     <script type="module" src="/index.tsx"></script>

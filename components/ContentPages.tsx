@@ -1,5 +1,6 @@
 import React from 'react';
 import { ArrowLeft, Bot, FileText, LifeBuoy, Mail, ShieldCheck } from 'lucide-react';
+import { AdBanner } from './ads/AdBanner';
 
 interface PageProps {
   onBack: () => void;
@@ -27,6 +28,10 @@ const PageShell: React.FC<{
       </div>
 
       <div className="space-y-6 text-sm md:text-base leading-7">{children}</div>
+
+      <div className="mt-12">
+        <AdBanner placement="content-bottom" />
+      </div>
     </div>
   </div>
 );

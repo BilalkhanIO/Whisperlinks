@@ -1,9 +1,9 @@
 import React, { useState, useEffect, useRef, useCallback } from 'react';
 import Peer, { DataConnection } from 'peerjs';
-import { Message, SenderType, ConnectionStatus, ChatMood, ChatMode, UserInfo } from './types';
+import { Message, SenderType, ConnectionStatus, ChatMood, ChatMode, UserInfo, ModerationSettings } from './types';
 import {
   sendMessageToGemini, streamMessageToGemini, generateSmartReplies,
-  initializeChatSession, resetSession, generateSpeech,
+  initializeChatSession, resetSession, generateSpeech, executeQuickPrompt
 } from './services/geminiService';
 import { playSound, decodeAndPlayAudio, speakWithBrowser } from './services/audioService';
 import { ChatMessage } from './components/ChatMessage';
@@ -16,11 +16,38 @@ import { ScrollToBottom } from './components/ScrollToBottom';
 import { EncryptionEffect } from './components/EncryptionEffect';
 import MatrixRain from './components/MatrixRain';
 import { SettingsPanel } from './components/SettingsPanel';
-import { loadPrefs, savePrefs } from './utils';
+import { loadPrefs, savePrefs, getRoomFingerprint } from './utils';
 import { COMMANDS, MOOD_META } from './constants';
 import { LandingPage } from './components/LandingPage';
 import { AboutPage, ContactPage, HelpPage, PrivacyPolicy, TermsPage } from './components/ContentPages';
-import { Send, Power, Settings, Mic, Loader2, Terminal, QrCode, Share2, Download } from 'lucide-react';
+import { PanicScreen } from './components/PanicScreen';
+import { CommandPalette } from './components/CommandPalette';
+import { VoiceRecorder } from './components/VoiceRecorder';
+import { LiveVoiceRoom } from './components/LiveVoiceRoom';
+import { PollModal } from './components/PollModal';
+import { ModerationModal } from './components/ModerationModal';
+import { LightboxModal } from './components/LightboxModal';
+import { PinLockModal } from './components/PinLockModal';
+import { WhisperIdModal } from './components/WhisperIdModal';
+import { WhisperIdSetupModal } from './components/WhisperIdSetupModal';
+import { ConnectByUsernameModal } from './components/ConnectByUsernameModal';
+import {
+  loadActiveWhisperIdentity,
+  isAppSessionLocked,
+  lockAppSession,
+  saveContactToBook,
+  registerEphemeralPresence,
+  heartbeatEphemeralPresence,
+  leaveEphemeralPresence,
+  getPeerIdFromWhisperId,
+  changeUsername,
+  UserIdentity,
+} from './services/identityService';
+import {
+  Send, Power, Settings, Mic, Loader2, Terminal, QrCode, Share2, Download, Save,
+  Bot, BotOff, ShieldAlert, Paperclip, BarChart2, Radio, Phone, PhoneOff, Search, Shield,
+  User, UserPlus, KeyRound, Lock
+} from 'lucide-react';
 
 const MAX_MSG_LENGTH = 500;
 const WHISPER_TTL = 15_000;
@@ -36,6 +63,47 @@ const App: React.FC = () => {
   const prefsRef = useRef(prefs);
   useEffect(() => { prefsRef.current = prefs; }, [prefs]);
 
+  // ── Decentralized Local Identity (WhisperID) & PIN ──
+  const [identity, setIdentity] = useState<UserIdentity>(() => ({
+    identityId: 'wid_init',
+    username: loadPrefs().username || 'CipherGhost',
+    whisperId: `${loadPrefs().username || 'CipherGhost'}#000000`,
+    shortTag: '000000',
+    hexFingerprint: 'INITIALIZING...',
+    wordFingerprint: 'INITIALIZING...',
+    publicKeySpki: '',
+    hasPin: false,
+    recoveryPhrase: '',
+    privacy: {
+      invisibleMode: false,
+      whoCanFindMe: 'anyone',
+      allowContactRequests: true,
+      allowCalls: true,
+      allowRoomInvites: true,
+    },
+    savedContacts: [],
+  }));
+  const identityRef = useRef(identity);
+  useEffect(() => { identityRef.current = identity; }, [identity]);
+
+  const [showPinModal, setShowPinModal] = useState(false);
+  const [pinModalMode, setPinModalMode] = useState<'unlock' | 'setup' | 'disable'>('unlock');
+  const [showIdentityModal, setShowIdentityModal] = useState(false);
+  const [showSetupModal, setShowSetupModal] = useState(false);
+  const [showConnectByUsernameModal, setShowConnectByUsernameModal] = useState(false);
+  const [connectModalMode, setConnectModalMode] = useState<'connect' | 'invite'>('connect');
+
+  // Load active cryptographic identity from IndexedDB on startup & check session lock
+  useEffect(() => {
+    loadActiveWhisperIdentity().then(loaded => {
+      setIdentity(loaded);
+      if (isAppSessionLocked()) {
+        setPinModalMode('unlock');
+        setShowPinModal(true);
+      }
+    });
+  }, []);
+
   // ── Connection ──
   const [status, setStatus] = useState<ConnectionStatus>(ConnectionStatus.IDLE);
   const [mode, setMode] = useState<ChatMode>('AI');
@@ -46,6 +114,9 @@ const App: React.FC = () => {
   const [roomName, setRoomName] = useState<string>('');
   const roomNameRef = useRef<string>('');
   const roomCodeRef = useRef<string>('');
+  const [isAiEnabled, setIsAiEnabled] = useState(true);
+  const isAiEnabledRef = useRef(true);
+  useEffect(() => { isAiEnabledRef.current = isAiEnabled; }, [isAiEnabled]);
 
   // ── Chat ──
   const [messages, setMessages] = useState<Message[]>([]);
@@ -64,6 +135,39 @@ const App: React.FC = () => {
   const [isScrolledUp, setIsScrolledUp] = useState(false);
   const [unreadCount, setUnreadCount] = useState(0);
   const [isListening, setIsListening] = useState(false);
+
+  // ── Panic / Quick Exit ──
+  const [isPanicked, setIsPanicked] = useState(false);
+
+  // ── Command Palette & Search ──
+  const [showCommandPalette, setShowCommandPalette] = useState(false);
+
+  // ── Voice Message Recording ──
+  const [isRecordingVoice, setIsRecordingVoice] = useState(false);
+
+  // ── Live Voice Room (WebRTC Audio Stream) ──
+  const [isInVoiceCall, setIsInVoiceCall] = useState(false);
+  const [isVoiceMuted, setIsVoiceMuted] = useState(false);
+  const [voiceLocalStream, setVoiceLocalStream] = useState<MediaStream | null>(null);
+  const [remoteVoiceStreams, setRemoteVoiceStreams] = useState<{ peerId: string; username: string; stream: MediaStream }[]>([]);
+  const voiceLocalStreamRef = useRef<MediaStream | null>(null);
+
+  // ── Interactive Polls ──
+  const [showPollModal, setShowPollModal] = useState(false);
+
+  // ── Room Moderation & Host Policies ──
+  const [showModerationModal, setShowModerationModal] = useState(false);
+  const [moderationSettings, setModerationSettings] = useState<ModerationSettings>({
+    allowFileSharing: true,
+    allowVoice: true,
+    allowAI: true,
+    isLocked: false,
+  });
+
+  // ── P2P File & Image Sharing ──
+  const [lightboxImage, setLightboxImage] = useState<{ url: string; name?: string } | null>(null);
+  const [isDraggingFile, setIsDraggingFile] = useState(false);
+  const fileInputRef = useRef<HTMLInputElement>(null);
 
   // ── Room code gate (guest side) ──
   const [showCodeModal, setShowCodeModal] = useState(false);
@@ -84,7 +188,7 @@ const App: React.FC = () => {
   const reconnectHostIdRef = useRef<string | null>(null);
   const wrongAttemptsRef = useRef<Map<string, number>>(new Map());
 
-  const hasApiKey = !!process.env.API_KEY;
+  const hasApiKey = true;
   const { canInstall, triggerInstall } = useInstallPrompt();
 
   // ── Helpers ──
@@ -96,6 +200,22 @@ const App: React.FC = () => {
   };
 
   // ── Effects ──
+  useEffect(() => {
+    const titles: Record<string, string> = {
+      '/': 'WhisperLink | Private Chat And AI Conversations',
+      '/about': 'About WhisperLink: Private P2P Chat',
+      '/help': 'WhisperLink Help Center',
+      '/privacy-policy': 'WhisperLink Privacy Policy',
+      '/terms': 'WhisperLink Terms of Use',
+      '/contact': 'Contact WhisperLink',
+    };
+    document.title = titles[currentPath] || 'WhisperLink';
+    let link = document.querySelector("link[rel='canonical']") as HTMLLinkElement;
+    if (link) {
+      link.href = `https://whisperlinks.app${currentPath === '/' ? '' : currentPath}`;
+    }
+  }, [currentPath]);
+
   useEffect(() => {
     const h = () => setCurrentPath(window.location.pathname);
     window.addEventListener('popstate', h);
@@ -115,8 +235,52 @@ const App: React.FC = () => {
     }
   }, []);
 
+  // Ephemeral Presence Heartbeat
   useEffect(() => {
-    const h = (e: KeyboardEvent) => { if (e.key === 'Escape') { setShowSettings(false); setShowCommandHints(false); } };
+    if (!identity.whisperId || identity.privacy?.invisibleMode) return;
+    if (peerRef.current && peerRef.current.id) {
+      registerEphemeralPresence(identity, peerRef.current.id);
+    }
+    const interval = setInterval(() => {
+      if (peerRef.current && peerRef.current.id && !peerRef.current.destroyed) {
+        heartbeatEphemeralPresence(identity.whisperId, peerRef.current.id);
+      }
+    }, 60 * 1000);
+    return () => clearInterval(interval);
+  }, [identity.whisperId, identity.privacy?.invisibleMode, peerId]);
+
+  useEffect(() => {
+    const h = (e: KeyboardEvent) => {
+      // Command Palette
+      if ((e.metaKey || e.ctrlKey) && e.key.toLowerCase() === 'k') {
+        e.preventDefault();
+        setShowCommandPalette(prev => !prev);
+        return;
+      }
+      // Panic Mode shortcut (Alt+P or Ctrl+Shift+X)
+      if ((e.altKey && e.key.toLowerCase() === 'p') || (e.ctrlKey && e.shiftKey && e.key.toLowerCase() === 'x')) {
+        e.preventDefault();
+        setIsPanicked(prev => {
+          if (prev) {
+            setIsInLobby(true);
+            return false;
+          } else {
+            triggerPanic();
+            return true;
+          }
+        });
+        return;
+      }
+      // Escape closes modals
+      if (e.key === 'Escape') {
+        setShowSettings(false);
+        setShowCommandHints(false);
+        setShowCommandPalette(false);
+        setShowPollModal(false);
+        setShowModerationModal(false);
+        setLightboxImage(null);
+      }
+    };
     window.addEventListener('keydown', h);
     return () => window.removeEventListener('keydown', h);
   }, []);
@@ -160,9 +324,18 @@ const App: React.FC = () => {
     savePrefs(newPrefs);
     if (status === ConnectionStatus.CONNECTED && (key === 'mood' || key === 'language')) {
       initializeChatSession(newPrefs.mood, newPrefs.language);
-      if (mode === 'P2P' && isHostRef.current) broadcastData({ type: 'sys_update', mood: newPrefs.mood, lang: newPrefs.language });
+      if (mode === 'P2P' && isHostRef.current) broadcastData({ type: 'sys_update', mood: newPrefs.mood, lang: newPrefs.language, aiEnabled: isAiEnabled });
       addSystemMsg(`RECONFIGURING → [${String(value)}]`);
     }
+  };
+
+  const toggleAiEnabled = () => {
+    const next = !isAiEnabled;
+    setIsAiEnabled(next);
+    if (mode === 'P2P' && isHostRef.current) {
+      broadcastData({ type: 'sys_update', mood: prefs.mood, lang: prefs.language, aiEnabled: next });
+    }
+    addSystemMsg(next ? `AI PROCESSING ENABLED` : `AI PROCESSING DISABLED (P2P ONLY)`);
   };
 
   // ── Message helpers ──
@@ -173,13 +346,30 @@ const App: React.FC = () => {
 
   const addMessage = (text: string, sender: SenderType, username?: string, opts: Partial<Message> = {}) => {
     if (prefsRef.current.sfxEnabled) playSound('message');
-    setMessages(p => [...p, {
-      id: Math.random().toString(36),
-      text, sender, username,
-      timestamp: new Date(),
+    const msg: Message = {
+      id: opts.id || crypto.randomUUID(),
+      text,
+      sender,
+      username,
+      timestamp: opts.timestamp ? new Date(opts.timestamp) : new Date(),
       isEncrypted: sender === SenderType.STRANGER && !opts.isStreaming,
+      status: sender === SenderType.USER && mode === 'P2P' ? 'sent' : undefined,
       ...opts,
-    }]);
+    };
+    setMessages(p => [...p, msg]);
+    return msg;
+  };
+
+  const exportChat = () => {
+    const text = messages.map(m => `[${m.timestamp.toLocaleString()}] ${m.sender === SenderType.SYSTEM ? 'SYSTEM' : (m.username || 'User')}: ${m.text}`).join('\n');
+    const blob = new Blob([text], { type: 'text/plain' });
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement('a');
+    a.href = url;
+    a.download = `WhisperLink_Chat_${new Date().toISOString().split('T')[0]}.txt`;
+    a.click();
+    URL.revokeObjectURL(url);
+    addSystemMsg('CHAT EXPORTED');
   };
 
   // ── Voice input ──
@@ -239,32 +429,101 @@ const App: React.FC = () => {
     connectionsRef.current.clear();
     wrongAttemptsRef.current.clear();
 
-    const peer = new Peer();
-    peerRef.current = peer;
+    const userHandlePeerId = getPeerIdFromWhisperId(identityRef.current.whisperId);
+    // If hosting or connecting, register with deterministic unique user handle ID
+    let initialPeer: Peer;
+    try {
+      initialPeer = new Peer(userHandlePeerId);
+    } catch {
+      initialPeer = new Peer();
+    }
+    peerRef.current = initialPeer;
 
-    peer.on('open', (id) => {
-      setPeerId(id);
-      setParticipants([{ peerId: id, username: prefsRef.current.username, isHost }]);
-      if (isHost) {
-        setStatus(ConnectionStatus.WAITING_FOR_PEER);
-        if (hasApiKey) initializeChatSession(prefsRef.current.mood, prefsRef.current.language);
-      } else if (hostId) {
-        addSystemMsg('CONNECTING TO SECURE ROOM...');
-        setupConnection(peer.connect(hostId));
+    const bindPeerEvents = (peer: Peer) => {
+      peer.on('open', (id) => {
+        setPeerId(id);
+        registerEphemeralPresence(identityRef.current, id);
+        setParticipants([{
+          peerId: id,
+          username: identityRef.current.username,
+          whisperId: identityRef.current.whisperId,
+          shortTag: identityRef.current.shortTag,
+          hexFingerprint: identityRef.current.hexFingerprint,
+          isHost,
+        }]);
+        if (isHost) {
+          setStatus(ConnectionStatus.WAITING_FOR_PEER);
+          if (hasApiKey) initializeChatSession(prefsRef.current.mood, prefsRef.current.language);
+        } else if (hostId) {
+          addSystemMsg('CONNECTING TO SECURE ROOM...');
+          setupConnection(peer.connect(hostId));
+        }
+      });
+
+      peer.on('connection', setupConnection);
+      peer.on('call', (mediaCall) => {
+        if (voiceLocalStreamRef.current) {
+          mediaCall.answer(voiceLocalStreamRef.current);
+        } else {
+          mediaCall.answer();
+        }
+        mediaCall.on('stream', (remoteStream) => {
+          setRemoteVoiceStreams(prev => {
+            if (prev.some(r => r.peerId === mediaCall.peer)) return prev;
+            const participant = participants.find(p => p.peerId === mediaCall.peer);
+            return [...prev, {
+              peerId: mediaCall.peer,
+              username: (mediaCall.metadata as any)?.username || participant?.username || 'Peer',
+              stream: remoteStream
+            }];
+          });
+        });
+        mediaCall.on('close', () => {
+          setRemoteVoiceStreams(prev => prev.filter(r => r.peerId !== mediaCall.peer));
+        });
+      });
+
+      peer.on('error', (err) => {
+        if (err.type === 'unavailable-id') {
+          // If custom user handle ID is already active (e.g. multi-tab), smoothly fallback to auto ID
+          const fallbackPeer = new Peer();
+          peerRef.current = fallbackPeer;
+          bindPeerEvents(fallbackPeer);
+          return;
+        }
+
+        if (prefsRef.current.sfxEnabled) playSound('error');
+        const msgMap: Record<string, string> = {
+          'peer-unavailable': 'PEER UNAVAILABLE — INVALID OR EXPIRED LINK',
+          'network': 'NETWORK ERROR — CHECK YOUR CONNECTION',
+        };
+        addSystemMsg(msgMap[err.type] ?? `CONNECTION ERROR: ${err.type?.toUpperCase() ?? 'UNKNOWN'}`);
+        setStatus(ConnectionStatus.DISCONNECTED);
+        tryAutoReconnect();
+      });
+    };
+
+    bindPeerEvents(initialPeer);
+  };
+
+  const handleDirectConnectToPeer = (targetPeerId: string, targetUsername: string) => {
+    // If inside an active room and user is host: invite/add user into the room
+    if (!isInLobby && mode === 'P2P' && isHostRef.current) {
+      addSystemMsg(`DISPATCHING INVITATION TO @${targetUsername.toUpperCase()}...`);
+      const conn = peerRef.current?.connect(targetPeerId);
+      if (conn) {
+        setupConnection(conn);
+        addSystemMsg(`SENT SECURE ROOM UPLINK TO @${targetUsername.toUpperCase()}`);
       }
-    });
+      return;
+    }
 
-    peer.on('connection', setupConnection);
-    peer.on('error', (err) => {
-      if (prefsRef.current.sfxEnabled) playSound('error');
-      const msgMap: Record<string, string> = {
-        'peer-unavailable': 'PEER UNAVAILABLE — INVALID OR EXPIRED LINK',
-        'network': 'NETWORK ERROR — CHECK YOUR CONNECTION',
-      };
-      addSystemMsg(msgMap[err.type] ?? `CONNECTION ERROR: ${err.type?.toUpperCase() ?? 'UNKNOWN'}`);
-      setStatus(ConnectionStatus.DISCONNECTED);
-      tryAutoReconnect();
-    });
+    // Connect from Lobby or direct 1v1
+    setIsInLobby(false);
+    setMode('P2P');
+    setRoomName(`Direct Link: @${targetUsername}`);
+    addSystemMsg(`CONNECTING DIRECTLY TO @${targetUsername.toUpperCase()}...`);
+    initializePeer(false, targetPeerId);
   };
 
   const tryAutoReconnect = useCallback(() => {
@@ -288,10 +547,18 @@ const App: React.FC = () => {
     if (prefsRef.current.sfxEnabled) playSound('connect');
     conn.send({
       type: 'handshake',
-      user: { peerId: peerRef.current?.id, username: prefsRef.current.username, isHost: isHostRef.current },
+      user: {
+        peerId: peerRef.current?.id,
+        username: identityRef.current.username,
+        whisperId: identityRef.current.whisperId,
+        shortTag: identityRef.current.shortTag,
+        hexFingerprint: identityRef.current.hexFingerprint,
+        isHost: isHostRef.current,
+      },
     });
     if (isHostRef.current) {
-      conn.send({ type: 'sys_update', mood: prefsRef.current.mood, lang: prefsRef.current.language });
+      conn.send({ type: 'sys_update', mood: prefsRef.current.mood, lang: prefsRef.current.language, aiEnabled: isAiEnabledRef.current });
+      conn.send({ type: 'mod_update', settings: moderationSettings });
     }
   };
 
@@ -400,15 +667,35 @@ const App: React.FC = () => {
       case 'sync_participants':
         setParticipants(data.participants as UserInfo[]);
         break;
-      case 'message':
+      case 'message': {
         setIsRemoteTyping(false);
-        addMessage(String(data.text), SenderType.STRANGER, String(data.username));
+        const incomingMsg = data.message as Message;
+        if (incomingMsg) {
+          addMessage(incomingMsg.text, SenderType.STRANGER, incomingMsg.username, {
+            id: incomingMsg.id,
+            timestamp: incomingMsg.timestamp,
+            expiresAt: incomingMsg.expiresAt,
+            replyTo: incomingMsg.replyTo
+          });
+          broadcastData({ type: 'ack', id: incomingMsg.id }, senderPeerId);
+        } else {
+          addMessage(String(data.text), SenderType.STRANGER, String(data.username));
+        }
         lastActivityTimeRef.current = Date.now();
         if (isHostRef.current) {
-          broadcastData({ type: 'message', text: data.text, username: data.username }, senderPeerId);
-          scheduleSmartResponse(String(data.text), String(data.username));
+          if (incomingMsg) {
+            broadcastData({ type: 'message', message: incomingMsg }, senderPeerId);
+          } else {
+            broadcastData({ type: 'message', text: data.text, username: data.username }, senderPeerId);
+          }
+          scheduleSmartResponse(String(incomingMsg?.text || data.text), String(incomingMsg?.username || data.username));
         }
         break;
+      }
+      case 'ack': {
+        setMessages(prev => prev.map(m => m.id === data.id ? { ...m, status: 'delivered' } : m));
+        break;
+      }
       case 'typing':
         setIsRemoteTyping(true);
         lastActivityTimeRef.current = Date.now();
@@ -418,6 +705,7 @@ const App: React.FC = () => {
         break;
       case 'sys_update':
         setPrefs(p => ({ ...p, mood: data.mood as ChatMood, language: data.lang as string }));
+        if (data.aiEnabled !== undefined) setIsAiEnabled(Boolean(data.aiEnabled));
         addSystemMsg(`HOST SYNC → [${data.mood}]`);
         break;
       case 'reaction':
@@ -431,6 +719,95 @@ const App: React.FC = () => {
           return { ...m, reactions };
         }));
         break;
+      case 'voice_msg': {
+        const incomingVoice = data.message as Message;
+        if (incomingVoice) {
+          setMessages(prev => {
+            if (prev.some(m => m.id === incomingVoice.id)) return prev;
+            return [...prev, {
+              ...incomingVoice,
+              sender: SenderType.STRANGER,
+              timestamp: new Date(incomingVoice.timestamp)
+            }];
+          });
+          broadcastData({ type: 'ack', id: incomingVoice.id }, senderPeerId);
+          if (isHostRef.current) broadcastData(data, senderPeerId);
+          if (prefsRef.current.sfxEnabled) playSound('receive');
+        }
+        break;
+      }
+      case 'file_msg': {
+        const incomingFile = data.message as Message;
+        if (incomingFile) {
+          setMessages(prev => {
+            if (prev.some(m => m.id === incomingFile.id)) return prev;
+            return [...prev, {
+              ...incomingFile,
+              sender: SenderType.STRANGER,
+              timestamp: new Date(incomingFile.timestamp)
+            }];
+          });
+          broadcastData({ type: 'ack', id: incomingFile.id }, senderPeerId);
+          if (isHostRef.current) broadcastData(data, senderPeerId);
+          if (prefsRef.current.sfxEnabled) playSound('receive');
+        }
+        break;
+      }
+      case 'poll_msg': {
+        const incomingPoll = data.message as Message;
+        if (incomingPoll) {
+          setMessages(prev => {
+            if (prev.some(m => m.id === incomingPoll.id)) return prev;
+            return [...prev, {
+              ...incomingPoll,
+              sender: SenderType.STRANGER,
+              timestamp: new Date(incomingPoll.timestamp)
+            }];
+          });
+          if (isHostRef.current) broadcastData(data, senderPeerId);
+          if (prefsRef.current.sfxEnabled) playSound('receive');
+        }
+        break;
+      }
+      case 'poll_vote': {
+        const { messageId, optionIndex, username } = data as { messageId: string; optionIndex: number; username: string };
+        setMessages(prev => prev.map(m => {
+          if (m.id !== messageId || !m.pollData) return m;
+          const updatedOptions = m.pollData.options.map((opt, idx) => {
+            const votesWithoutUser = opt.votes.filter(u => u !== username);
+            if (idx === optionIndex) {
+              return opt.votes.includes(username)
+                ? { ...opt, votes: votesWithoutUser }
+                : { ...opt, votes: [...votesWithoutUser, username] };
+            }
+            return { ...opt, votes: votesWithoutUser };
+          });
+          return {
+            ...m,
+            pollData: {
+              ...m.pollData,
+              options: updatedOptions,
+              totalVotes: updatedOptions.reduce((s, o) => s + o.votes.length, 0)
+            }
+          };
+        }));
+        if (isHostRef.current) broadcastData(data, senderPeerId);
+        break;
+      }
+      case 'mod_update': {
+        if (data.settings) {
+          setModerationSettings(data.settings as ModerationSettings);
+          addSystemMsg('HOST UPDATED ROOM SECURITY POLICIES');
+        }
+        break;
+      }
+      case 'mod_kick': {
+        if (data.targetPeerId === peerRef.current?.id) {
+          addSystemMsg('YOU WERE REMOVED FROM THIS ROOM BY THE HOST');
+          handleDisconnect();
+        }
+        break;
+      }
     }
   };
 
@@ -456,7 +833,7 @@ const App: React.FC = () => {
 
   // ── AI scheduler (P2P) ──
   const scheduleSmartResponse = useCallback((triggerText: string | null, senderName: string | null, isInterruptionCheck = false) => {
-    if (!hasApiKey || mode !== 'P2P' || !isHostRef.current) return;
+    if (!hasApiKey || mode !== 'P2P' || !isHostRef.current || !isAiEnabledRef.current) return;
     if (aiTimeoutRef.current) clearTimeout(aiTimeoutRef.current);
     if (triggerText) {
       const lower = triggerText.toLowerCase();
@@ -473,6 +850,7 @@ const App: React.FC = () => {
   }, [mode, hasApiKey]);
 
   const triggerGroupAI = async (triggerText: string, senderName: string) => {
+    if (!isAiEnabledRef.current) return;
     setIsLocalTyping(true);
     broadcastData({ type: 'typing' });
     await new Promise(r => setTimeout(r, 1000 + Math.random() * 2000));
@@ -483,12 +861,16 @@ const App: React.FC = () => {
       const response = await sendMessageToGemini(prompt);
       setIsLocalTyping(false);
       const aiName = getAiName(prefsRef.current.mood);
-      addMessage(response, SenderType.STRANGER, aiName);
-      broadcastData({ type: 'message', text: response, username: aiName });
+      const newMsg = addMessage(response, SenderType.STRANGER, aiName);
+      broadcastData({ type: 'message', message: newMsg });
       lastActivityTimeRef.current = Date.now();
       if (prefsRef.current.voiceEnabled) {
         const audio = await generateSpeech(response, prefsRef.current.mood);
-        if (audio) decodeAndPlayAudio(audio); else speakWithBrowser(response, prefsRef.current.mood);
+        if (audio) {
+          decodeAndPlayAudio(audio, response, prefsRef.current.mood);
+        } else {
+          speakWithBrowser(response, prefsRef.current.mood);
+        }
       }
     } catch { setIsLocalTyping(false); }
   };
@@ -510,6 +892,276 @@ const App: React.FC = () => {
     setSmartReplies(replies);
   };
 
+  // ── Panic / Disguise ──
+  const triggerPanic = () => {
+    if (voiceLocalStreamRef.current) {
+      voiceLocalStreamRef.current.getTracks().forEach(t => t.stop());
+    }
+    setVoiceLocalStream(null);
+    voiceLocalStreamRef.current = null;
+    setIsInVoiceCall(false);
+    setRemoteVoiceStreams([]);
+    if (peerRef.current) {
+      peerRef.current.destroy();
+      peerRef.current = null;
+    }
+    connectionsRef.current.clear();
+    setMessages([]);
+    setParticipants([]);
+    setIsPanicked(true);
+  };
+
+  // ── Live Voice Room ──
+  const handleToggleVoiceCall = async () => {
+    if (isInVoiceCall) {
+      handleLeaveVoiceCall();
+      return;
+    }
+    if (!moderationSettings.allowVoice && !isHostRef.current) {
+      addSystemMsg('VOICE CHAT IS DISABLED BY ROOM HOST');
+      return;
+    }
+    try {
+      const stream = await navigator.mediaDevices.getUserMedia({ audio: true, video: false });
+      setVoiceLocalStream(stream);
+      voiceLocalStreamRef.current = stream;
+      setIsInVoiceCall(true);
+      setIsVoiceMuted(false);
+      if (prefsRef.current.sfxEnabled) playSound('connect');
+      addSystemMsg('JOINED LIVE P2P VOICE ROOM 🎙️');
+
+      connectionsRef.current.forEach((conn, pid) => {
+        if (!peerRef.current) return;
+        const mediaCall = peerRef.current.call(pid, stream, {
+          metadata: { username: prefsRef.current.username }
+        });
+        if (mediaCall) {
+          mediaCall.on('stream', (remoteStream) => {
+            setRemoteVoiceStreams(prev => {
+              if (prev.some(r => r.peerId === pid)) return prev;
+              const p = participants.find(part => part.peerId === pid);
+              return [...prev, { peerId: pid, username: p?.username || 'Peer', stream: remoteStream }];
+            });
+          });
+          mediaCall.on('close', () => {
+            setRemoteVoiceStreams(prev => prev.filter(r => r.peerId !== pid));
+          });
+        }
+      });
+    } catch (err) {
+      console.error('Microphone error', err);
+      addSystemMsg('MICROPHONE ACCESS DENIED — CANNOT JOIN VOICE');
+    }
+  };
+
+  const handleLeaveVoiceCall = () => {
+    if (voiceLocalStreamRef.current) {
+      voiceLocalStreamRef.current.getTracks().forEach(t => t.stop());
+    }
+    setVoiceLocalStream(null);
+    voiceLocalStreamRef.current = null;
+    setIsInVoiceCall(false);
+    setRemoteVoiceStreams([]);
+    addSystemMsg('LEFT VOICE ROOM');
+  };
+
+  const handleToggleVoiceMute = () => {
+    if (!voiceLocalStreamRef.current) return;
+    const tracks = voiceLocalStreamRef.current.getAudioTracks();
+    if (tracks.length > 0) {
+      const nextMuted = !isVoiceMuted;
+      tracks[0].enabled = !nextMuted;
+      setIsVoiceMuted(nextMuted);
+    }
+  };
+
+  // ── Voice Message Recording ──
+  const handleSendVoiceMessage = (dataUrl: string, duration: number) => {
+    setIsRecordingVoice(false);
+    if (!moderationSettings.allowVoice && !isHostRef.current) {
+      addSystemMsg('VOICE MESSAGES DISABLED BY ROOM HOST');
+      return;
+    }
+    if (prefs.sfxEnabled) playSound('send');
+    const msgId = Math.random().toString(36).substring(2);
+    const newMsg: Message = {
+      id: msgId,
+      text: '🎙️ Voice note',
+      sender: SenderType.USER,
+      username: prefs.username,
+      timestamp: new Date(),
+      type: 'voice',
+      voiceData: { duration, dataUrl },
+      expiresAt: isWhisperMode ? Date.now() + WHISPER_TTL : undefined,
+      status: 'sent',
+    };
+    setMessages(prev => [...prev, newMsg]);
+    if (mode === 'P2P') {
+      broadcastData({ type: 'voice_msg', message: newMsg });
+    }
+  };
+
+  // ── Interactive Polls ──
+  const handleCreatePoll = (question: string, options: string[]) => {
+    const pollId = Math.random().toString(36).substring(2);
+    const msgId = Math.random().toString(36).substring(2);
+    const newMsg: Message = {
+      id: msgId,
+      text: `📊 Poll: ${question}`,
+      sender: SenderType.USER,
+      username: prefs.username,
+      timestamp: new Date(),
+      type: 'poll',
+      pollData: {
+        id: pollId,
+        question,
+        options: options.map(o => ({ text: o, votes: [] })),
+        creator: prefs.username,
+        totalVotes: 0,
+      },
+      status: 'sent',
+    };
+    setMessages(prev => [...prev, newMsg]);
+    if (prefs.sfxEnabled) playSound('send');
+    if (mode === 'P2P') {
+      broadcastData({ type: 'poll_msg', message: newMsg });
+    }
+  };
+
+  const handleVotePoll = (messageId: string, optionIndex: number) => {
+    setMessages(prev => prev.map(m => {
+      if (m.id !== messageId || !m.pollData) return m;
+      const updatedOptions = m.pollData.options.map((opt, idx) => {
+        const votesWithoutUser = opt.votes.filter(u => u !== prefs.username);
+        if (idx === optionIndex) {
+          return opt.votes.includes(prefs.username)
+            ? { ...opt, votes: votesWithoutUser }
+            : { ...opt, votes: [...votesWithoutUser, prefs.username] };
+        }
+        return { ...opt, votes: votesWithoutUser };
+      });
+      return {
+        ...m,
+        pollData: {
+          ...m.pollData,
+          options: updatedOptions,
+          totalVotes: updatedOptions.reduce((s, o) => s + o.votes.length, 0),
+        }
+      };
+    }));
+    if (mode === 'P2P') {
+      broadcastData({ type: 'poll_vote', messageId, optionIndex, username: prefs.username });
+    }
+  };
+
+  // ── P2P File & Image Sharing ──
+  const processFileUpload = (file: File) => {
+    if (!moderationSettings.allowFileSharing && !isHostRef.current) {
+      addSystemMsg('FILE SHARING IS DISABLED BY ROOM HOST');
+      return;
+    }
+    if (file.size > 12 * 1024 * 1024) {
+      addSystemMsg('FILE EXCEEDS 12MB LIMIT FOR DIRECT P2P TRANSFER');
+      return;
+    }
+
+    const reader = new FileReader();
+    reader.onload = (e) => {
+      const dataUrl = e.target?.result as string;
+      if (!dataUrl) return;
+
+      const isImage = file.type.startsWith('image/');
+      const newMsg: Message = {
+        id: Math.random().toString(36).substring(2),
+        text: isImage ? `📷 Image: ${file.name}` : `📎 File: ${file.name}`,
+        sender: SenderType.USER,
+        username: prefs.username,
+        timestamp: new Date(),
+        type: isImage ? 'image' : 'file',
+        fileData: {
+          name: file.name,
+          size: file.size,
+          mimeType: file.type,
+          dataUrl
+        },
+        expiresAt: isWhisperMode ? Date.now() + WHISPER_TTL : undefined,
+        status: 'sent',
+      };
+
+      setMessages(prev => [...prev, newMsg]);
+      if (prefs.sfxEnabled) playSound('send');
+      if (mode === 'P2P') {
+        broadcastData({ type: 'file_msg', message: newMsg });
+      }
+    };
+    reader.readAsDataURL(file);
+  };
+
+  // ── Room Moderation & Host Policies ──
+  const handleUpdateModerationSettings = (newSettings: ModerationSettings) => {
+    setModerationSettings(newSettings);
+    if (mode === 'P2P') {
+      broadcastData({ type: 'mod_update', settings: newSettings });
+    }
+    addSystemMsg('UPDATED ROOM SECURITY POLICIES');
+  };
+
+  const handleKickParticipant = (targetPeerId: string, kickUsername: string) => {
+    if (mode === 'P2P') {
+      broadcastData({ type: 'mod_kick', targetPeerId });
+      const conn = connectionsRef.current.get(targetPeerId);
+      if (conn) {
+        conn.close();
+        connectionsRef.current.delete(targetPeerId);
+      }
+      setParticipants(prev => prev.filter(p => p.peerId !== targetPeerId));
+      addSystemMsg(`REMOVED ${kickUsername.toUpperCase()} FROM ROOM`);
+    }
+  };
+
+  const handleCloseRoom = () => {
+    setShowModerationModal(false);
+    handleDisconnect();
+  };
+
+  // ── AI Quick Actions ──
+  const handleRunAiCommand = async (cmd: string) => {
+    if (!isAiEnabledRef.current) {
+      addSystemMsg('AI IS CURRENTLY DISABLED IN THIS ROOM');
+      return;
+    }
+    const recentChat = messages
+      .filter(m => m.sender !== SenderType.SYSTEM && m.text)
+      .slice(-25)
+      .map(m => `${m.username || 'User'}: ${m.text}`)
+      .join('\n');
+
+    setIsLocalTyping(true);
+    let prompt = '';
+    if (cmd === '/summary') {
+      prompt = `Provide a concise 2-3 sentence executive summary of key discussions from this chat log:\n\n${recentChat || 'No chat history.'}`;
+    } else if (cmd === '/action-items' || cmd === '/tasks') {
+      prompt = `Extract all action items, tasks, and agreed decisions from this chat log in clean bullet points:\n\n${recentChat || 'No chat history.'}`;
+    } else if (cmd === '/roast') {
+      prompt = `Roast this group conversation in a witty, savage, playful way in 2 sentences:\n\n${recentChat || 'No chat history.'}`;
+    } else if (cmd === '/vibe') {
+      prompt = `Give an accurate vibe check analysis of the mood, energy, and tone of this conversation:\n\n${recentChat || 'No chat history.'}`;
+    }
+
+    try {
+      const response = await executeQuickPrompt(prompt);
+      setIsLocalTyping(false);
+      const aiName = getAiName(prefs.mood);
+      const newMsg = addMessage(response, SenderType.STRANGER, aiName);
+      if (mode === 'P2P') {
+        broadcastData({ type: 'message', message: newMsg });
+      }
+    } catch {
+      setIsLocalTyping(false);
+      addSystemMsg('AI GENERATION FAILED');
+    }
+  };
+
   // ── Send message + commands ──
   const handleSendMessage = async (e?: React.FormEvent) => {
     e?.preventDefault();
@@ -526,6 +1178,26 @@ const App: React.FC = () => {
       const cmd = parts[0].toLowerCase();
       const args = parts.slice(1).join(' ');
 
+      if (cmd === '/panic') {
+        triggerPanic();
+        return;
+      }
+
+      if (cmd === '/voice') {
+        handleToggleVoiceCall();
+        return;
+      }
+
+      if (cmd === '/poll') {
+        setShowPollModal(true);
+        return;
+      }
+
+      if (cmd === '/action-items' || cmd === '/tasks') {
+        await handleRunAiCommand('/action-items');
+        return;
+      }
+
       if (cmd === '/clear') { setMessages([]); addSystemMsg('CHAT CLEARED'); return; }
 
       if (cmd === '/help') {
@@ -536,6 +1208,11 @@ const App: React.FC = () => {
       if (cmd === '/whisper') {
         setIsWhisperMode(w => !w);
         addSystemMsg(isWhisperMode ? 'WHISPER MODE OFF — messages persist' : 'WHISPER MODE ON — next messages self-destruct in 15s 👻');
+        return;
+      }
+
+      if (['/summary', '/debate', '/roast', '/vibe'].includes(cmd) && !isAiEnabledRef.current) {
+        addSystemMsg('AI IS CURRENTLY DISABLED IN THIS ROOM');
         return;
       }
 
@@ -593,12 +1270,12 @@ const App: React.FC = () => {
     const msgOpts: Partial<Message> = {};
     if (replyingTo) { msgOpts.replyTo = { id: replyingTo.id, text: replyingTo.text, username: replyingTo.username }; }
     if (isWhisperMode) { msgOpts.expiresAt = Date.now() + WHISPER_TTL; }
-    addMessage(text, SenderType.USER, prefs.username, msgOpts);
+    const newMsg = addMessage(text, SenderType.USER, prefs.username, msgOpts);
     setReplyingTo(null);
     lastActivityTimeRef.current = Date.now();
 
     if (mode === 'P2P') {
-      broadcastData({ type: 'message', text, username: prefs.username });
+      broadcastData({ type: 'message', message: newMsg });
       if (isHostRef.current) scheduleSmartResponse(text, prefs.username);
     } else {
       // ── Streaming solo AI response ──
@@ -624,7 +1301,11 @@ const App: React.FC = () => {
       // Voice
       if (prefs.voiceEnabled) {
         const audio = await generateSpeech(fullText, prefs.mood);
-        if (audio) decodeAndPlayAudio(audio); else speakWithBrowser(fullText, prefs.mood);
+        if (audio) {
+          decodeAndPlayAudio(audio, fullText, prefs.mood);
+        } else {
+          speakWithBrowser(fullText, prefs.mood);
+        }
       }
     }
   };
@@ -707,11 +1388,22 @@ const App: React.FC = () => {
   const contentPage = renderContentPage();
   if (contentPage) return contentPage;
 
+  if (isPanicked) {
+    return <PanicScreen onRestore={() => { setIsPanicked(false); setIsInLobby(true); }} />;
+  }
+
   if (isInLobby) {
     return (
       <LandingPage
         username={prefs.username}
-        setUsername={(name) => setPrefs({ ...prefs, username: name })}
+        setUsername={(name) => {
+          setPrefs({ ...prefs, username: name });
+          setIdentity(prev => {
+            const next = { ...prev, username: name };
+            saveUserIdentity(next);
+            return next;
+          });
+        }}
         onEnter={handleEnterVoid}
         onNavigate={navigateTo}
         showSettings={showSettings}
@@ -725,6 +1417,12 @@ const App: React.FC = () => {
         toggleSfx={() => updatePref('sfxEnabled', !prefs.sfxEnabled)}
         voice={prefs.voiceEnabled}
         toggleVoice={() => updatePref('voiceEnabled', !prefs.voiceEnabled)}
+        identity={identity}
+        onOpenIdentityModal={() => setShowIdentityModal(true)}
+        onOpenConnectByUsername={() => {
+          setConnectModalMode('connect');
+          setShowConnectByUsernameModal(true);
+        }}
       />
     );
   }
@@ -742,10 +1440,23 @@ const App: React.FC = () => {
               <h2 className="font-bold text-sm text-zinc-200">
                 {mode === 'P2P' ? (roomName || 'Group Channel') : 'Secure Uplink'}
               </h2>
-              <span className="hidden sm:flex items-center gap-1 bg-void-dark border border-white/8 rounded-full px-2 py-0.5 text-[10px]">
-                <span aria-hidden="true">{MOOD_META[prefs.mood].emoji}</span>
-                <span className="text-zinc-400 font-mono">{MOOD_META[prefs.mood].name}</span>
-              </span>
+              {isInVoiceCall && (
+                <span className="flex items-center gap-1 bg-neon-green/10 border border-neon-green/30 text-neon-green rounded-full px-2 py-0.5 text-[10px] font-mono animate-pulse">
+                  <Radio size={10} />
+                  VOICE ACTIVE
+                </span>
+              )}
+              {isAiEnabled ? (
+                <span className="hidden sm:flex items-center gap-1 bg-void-dark border border-white/8 rounded-full px-2 py-0.5 text-[10px]" title="AI Enabled">
+                  <span aria-hidden="true">{MOOD_META[prefs.mood].emoji}</span>
+                  <span className="text-zinc-400 font-mono">{MOOD_META[prefs.mood].name}</span>
+                </span>
+              ) : (
+                <span className="hidden sm:flex items-center gap-1 bg-void-dark border border-white/8 rounded-full px-2 py-0.5 text-[10px]" title="P2P Only - No AI">
+                  <BotOff size={10} className="text-zinc-500" />
+                  <span className="text-zinc-500 font-mono">P2P ONLY</span>
+                </span>
+              )}
               {isWhisperMode && <span className="text-[10px] font-mono text-purple-400 animate-pulse">👻 WHISPER</span>}
             </div>
             <div className="flex gap-1.5 text-[10px] font-mono text-zinc-600 mt-0.5">
@@ -755,18 +1466,109 @@ const App: React.FC = () => {
           </div>
         </div>
 
-        <div className="flex gap-1.5">
+        <div className="flex items-center gap-1 sm:gap-1.5">
+          {/* Emergency Panic Button */}
+          <button
+            onClick={triggerPanic}
+            className="px-2 py-1.5 rounded-xl bg-red-500/10 hover:bg-red-500/20 text-red-400 border border-red-500/30 transition-all flex items-center gap-1 text-[11px] font-mono"
+            title="Instant Panic & Wipe (Alt+P or Ctrl+Shift+X)"
+            aria-label="Emergency Panic Button"
+          >
+            <ShieldAlert size={14} />
+            <span className="hidden md:inline font-bold">PANIC</span>
+          </button>
+
+          {/* Quick Command Palette Button */}
+          <button
+            onClick={() => setShowCommandPalette(true)}
+            className="p-2 rounded-xl text-zinc-500 hover:text-neon-green hover:bg-neon-green/5 transition-all"
+            title="Command Palette & Search (Ctrl+K)"
+            aria-label="Command Palette"
+          >
+            <Search size={16} />
+          </button>
+
+          {/* Add / Invite Peer by Username */}
+          {mode === 'P2P' && (
+            <button
+              onClick={() => {
+                setConnectModalMode('invite');
+                setShowConnectByUsernameModal(true);
+              }}
+              className="p-2 rounded-xl text-zinc-500 hover:text-neon-green hover:bg-neon-green/5 transition-all"
+              title="Add or Invite Peer by Username"
+              aria-label="Add user by username"
+            >
+              <UserPlus size={16} />
+            </button>
+          )}
+
+          {/* Live Voice Room Toggle */}
+          {mode === 'P2P' && (
+            <button
+              onClick={handleToggleVoiceCall}
+              className={`p-2 rounded-xl transition-all ${
+                isInVoiceCall
+                  ? 'bg-neon-green/15 text-neon-green border border-neon-green/40 shadow-sm shadow-neon-green/20'
+                  : 'text-zinc-500 hover:text-zinc-200 hover:bg-white/5'
+              }`}
+              title={isInVoiceCall ? "Leave Voice Call" : "Join P2P Live Voice Call"}
+              aria-label="Toggle voice room"
+            >
+              {isInVoiceCall ? <PhoneOff size={16} className="text-neon-green" /> : <Phone size={16} />}
+            </button>
+          )}
+
+          {/* Decentralized Identity & Local PIN */}
+          <button
+            onClick={() => setShowIdentityModal(true)}
+            className="p-2 rounded-xl text-zinc-500 hover:text-zinc-200 hover:bg-white/5 transition-all flex items-center gap-1"
+            title={`WhisperID: @${identity.whisperId}${identity.hasPin ? ' (PIN Protected)' : ''}`}
+            aria-label="Identity & PIN Settings"
+          >
+            <User size={16} />
+            {identity.hasPin && <Lock size={10} className="text-neon-green" />}
+          </button>
+
+          {/* Moderation Controls (Host Only) */}
+          {mode === 'P2P' && isHostRef.current && (
+            <button
+              onClick={() => setShowModerationModal(true)}
+              className="p-2 rounded-xl text-zinc-500 hover:text-neon-green hover:bg-neon-green/5 transition-all"
+              title="Host Moderation & Security Policies"
+              aria-label="Moderation controls"
+            >
+              <Shield size={16} />
+            </button>
+          )}
+
+          {mode === 'P2P' && isHostRef.current && (
+            <button
+              onClick={toggleAiEnabled}
+              className={`p-2 rounded-xl transition-all ${isAiEnabled ? 'text-neon-green bg-neon-green/5' : 'text-zinc-500 hover:text-zinc-200 hover:bg-white/5'}`}
+              title={isAiEnabled ? "Disable AI for this room" : "Enable AI for this room"}
+            >
+              {isAiEnabled ? <Bot size={16} /> : <BotOff size={16} />}
+            </button>
+          )}
+          <button
+            onClick={exportChat}
+            className="p-2 rounded-xl text-zinc-500 hover:text-neon-green hover:bg-neon-green/5 transition-all"
+            aria-label="Export chat" title="Export Chat"
+          >
+            <Save size={16} />
+          </button>
           {canInstall && (
             <button
               onClick={triggerInstall}
               className="p-2 rounded-xl text-zinc-500 hover:text-neon-green hover:bg-neon-green/5 transition-all"
               aria-label="Install app" title="Install WhisperLink"
             >
-              <Download size={17} />
+              <Download size={16} />
             </button>
           )}
           <button onClick={() => setShowSettings(true)} className="p-2 rounded-xl text-zinc-500 hover:text-zinc-200 hover:bg-white/5 transition-all" aria-label="Settings" title="Settings">
-            <Settings size={17} />
+            <Settings size={16} />
           </button>
           {mode === 'P2P' && peerId && (
             <>
@@ -775,32 +1577,62 @@ const App: React.FC = () => {
                 className="p-2 rounded-xl text-zinc-500 hover:text-neon-green hover:bg-neon-green/5 transition-all"
                 aria-label="Show QR code" title="QR invite"
               >
-                <QrCode size={17} />
+                <QrCode size={16} />
               </button>
               <button
                 onClick={handleShare}
                 className="p-2 rounded-xl text-neon-green hover:bg-neon-green/10 transition-all"
                 aria-label="Share invite link" title="Share link"
               >
-                <Share2 size={17} />
+                <Share2 size={16} />
               </button>
             </>
           )}
           <button onClick={handleDisconnect} className="p-2 rounded-xl text-red-500/70 hover:text-red-400 hover:bg-red-500/10 transition-all" aria-label="Disconnect" title="Disconnect">
-            <Power size={17} />
+            <Power size={16} />
           </button>
         </div>
       </header>
+
+      {/* ── Live Voice Room Component ── */}
+      {isInVoiceCall && (
+        <LiveVoiceRoom
+          localStream={voiceLocalStream}
+          remoteStreams={remoteVoiceStreams}
+          isMuted={isVoiceMuted}
+          onToggleMute={handleToggleVoiceMute}
+          onLeaveCall={handleLeaveVoiceCall}
+          participants={participants}
+          currentUsername={prefs.username}
+        />
+      )}
 
       {/* ── Messages ── */}
       <div
         ref={messagesContainerRef}
         onScroll={handleScrollContainer}
-        className="flex-1 overflow-y-auto px-4 pt-4 scroll-smooth z-10"
+        onDragOver={(e) => { e.preventDefault(); setIsDraggingFile(true); }}
+        onDragLeave={(e) => { e.preventDefault(); setIsDraggingFile(false); }}
+        onDrop={(e) => {
+          e.preventDefault();
+          setIsDraggingFile(false);
+          if (e.dataTransfer.files && e.dataTransfer.files.length > 0) {
+            processFileUpload(e.dataTransfer.files[0]);
+          }
+        }}
+        className="flex-1 overflow-y-auto px-4 pt-4 scroll-smooth z-10 relative"
         role="log"
         aria-label="Chat messages"
         aria-live="polite"
       >
+        {isDraggingFile && (
+          <div className="absolute inset-0 z-30 bg-black/85 backdrop-blur-md border-2 border-dashed border-neon-green flex flex-col items-center justify-center pointer-events-none">
+            <Paperclip size={44} className="text-neon-green animate-bounce mb-3" />
+            <p className="text-sm font-mono text-neon-green font-bold">DROP FILE TO SEND PEER-TO-PEER</p>
+            <p className="text-xs text-zinc-400 mt-1">Direct encrypted binary channel (max 12MB)</p>
+          </div>
+        )}
+
         {status === ConnectionStatus.DISCONNECTED && (
           <div className="flex flex-col items-center justify-center h-full gap-4">
             <p className="text-sm font-bold text-red-400">CONNECTION LOST</p>
@@ -843,6 +1675,8 @@ const App: React.FC = () => {
               onReact={handleReact}
               onReply={(m) => { setReplyingTo(m); }}
               onExpire={(id) => setMessages(prev => prev.filter(m => m.id !== id))}
+              onOpenImage={(url, name) => setLightboxImage({ url, name })}
+              onVotePoll={handleVotePoll}
             />
           ))}
           {(isLocalTyping || isRemoteTyping) && (
@@ -903,49 +1737,106 @@ const App: React.FC = () => {
             </div>
           )}
 
-          <form onSubmit={handleSendMessage} className="flex gap-2.5 items-center" aria-label="Message input">
-            <button
-              type="button"
-              onClick={toggleListening}
-              className={`p-2.5 rounded-xl transition-all shrink-0 ${isListening ? 'bg-red-500/15 text-red-400 animate-pulse' : 'bg-zinc-900/80 text-zinc-500 hover:text-zinc-300 border border-zinc-800'}`}
-              aria-label={isListening ? 'Stop listening' : 'Voice input'}
-              aria-pressed={isListening}
-            >
-              {isListening ? <Loader2 size={18} className="animate-spin" /> : <Mic size={18} />}
-            </button>
-
-            <div className="relative flex-1">
+          {isRecordingVoice ? (
+            <VoiceRecorder
+              onSend={handleSendVoiceMessage}
+              onCancel={() => setIsRecordingVoice(false)}
+            />
+          ) : (
+            <form onSubmit={handleSendMessage} className="flex gap-2 items-center" aria-label="Message input">
               <input
-                value={inputText}
-                onChange={handleTyping}
-                onKeyDown={(e) => e.key === 'Escape' && setShowCommandHints(false)}
-                placeholder={
-                  isWhisperMode ? '👻 Whisper mode — message self-destructs…' :
-                  isListening ? 'Listening…' :
-                  'Message or type / for commands'
-                }
-                className={`w-full bg-zinc-900/80 border rounded-xl px-4 py-2.5 text-sm text-zinc-100 outline-none transition-all placeholder:text-zinc-600 pr-12 ${
-                  isWhisperMode ? 'border-purple-500/40 bg-purple-500/5' : 'border-zinc-800 focus:border-zinc-600/80'
-                }`}
-                aria-label="Message"
-                disabled={status !== ConnectionStatus.CONNECTED}
+                type="file"
+                ref={fileInputRef}
+                onChange={(e) => {
+                  if (e.target.files?.[0]) {
+                    processFileUpload(e.target.files[0]);
+                  }
+                  e.target.value = '';
+                }}
+                className="hidden"
               />
-              {inputText.length > MAX_MSG_LENGTH * 0.7 && (
-                <span className={`absolute right-3 top-1/2 -translate-y-1/2 text-[9px] font-mono tabular-nums ${inputText.length >= MAX_MSG_LENGTH ? 'text-red-400' : 'text-yellow-500'}`} aria-live="polite">
-                  {MAX_MSG_LENGTH - inputText.length}
-                </span>
-              )}
-            </div>
 
-            <button
-              disabled={!inputText.trim() || status !== ConnectionStatus.CONNECTED}
-              type="submit"
-              className="bg-neon-green text-black p-2.5 rounded-xl hover:bg-green-400 disabled:opacity-40 disabled:cursor-not-allowed transition-all shrink-0"
-              aria-label="Send message"
-            >
-              <Send size={18} />
-            </button>
-          </form>
+              {/* Attach File Button */}
+              <button
+                type="button"
+                onClick={() => fileInputRef.current?.click()}
+                disabled={status !== ConnectionStatus.CONNECTED || (!moderationSettings.allowFileSharing && !isHostRef.current)}
+                className="p-2.5 rounded-xl bg-zinc-900/80 text-zinc-400 hover:text-neon-green hover:border-zinc-700 border border-zinc-800 transition-all shrink-0 disabled:opacity-40"
+                title="Attach File or Image"
+                aria-label="Attach File"
+              >
+                <Paperclip size={17} />
+              </button>
+
+              {/* Poll Button */}
+              <button
+                type="button"
+                onClick={() => setShowPollModal(true)}
+                disabled={status !== ConnectionStatus.CONNECTED}
+                className="p-2.5 rounded-xl bg-zinc-900/80 text-zinc-400 hover:text-neon-green hover:border-zinc-700 border border-zinc-800 transition-all shrink-0 disabled:opacity-40"
+                title="Create Poll"
+                aria-label="Create Poll"
+              >
+                <BarChart2 size={17} />
+              </button>
+
+              {/* Record Voice Note Button */}
+              <button
+                type="button"
+                onClick={() => setIsRecordingVoice(true)}
+                disabled={status !== ConnectionStatus.CONNECTED || (!moderationSettings.allowVoice && !isHostRef.current)}
+                className="p-2.5 rounded-xl bg-zinc-900/80 text-zinc-400 hover:text-purple-400 hover:border-zinc-700 border border-zinc-800 transition-all shrink-0 disabled:opacity-40"
+                title="Record Voice Note"
+                aria-label="Record Voice Note"
+              >
+                <Radio size={17} />
+              </button>
+
+              {/* Speech to text */}
+              <button
+                type="button"
+                onClick={toggleListening}
+                className={`p-2.5 rounded-xl transition-all shrink-0 ${isListening ? 'bg-red-500/15 text-red-400 animate-pulse' : 'bg-zinc-900/80 text-zinc-500 hover:text-zinc-300 border border-zinc-800'}`}
+                aria-label={isListening ? 'Stop listening' : 'Voice input'}
+                aria-pressed={isListening}
+                title="Voice Dictation"
+              >
+                {isListening ? <Loader2 size={17} className="animate-spin" /> : <Mic size={17} />}
+              </button>
+
+              <div className="relative flex-1">
+                <input
+                  value={inputText}
+                  onChange={handleTyping}
+                  onKeyDown={(e) => e.key === 'Escape' && setShowCommandHints(false)}
+                  placeholder={
+                    isWhisperMode ? '👻 Whisper mode — message self-destructs…' :
+                    isListening ? 'Listening…' :
+                    'Message or type / for commands (Ctrl+K for palette)'
+                  }
+                  className={`w-full bg-zinc-900/80 border rounded-xl px-4 py-2.5 text-sm text-zinc-100 outline-none transition-all placeholder:text-zinc-600 pr-12 ${
+                    isWhisperMode ? 'border-purple-500/40 bg-purple-500/5' : 'border-zinc-800 focus:border-zinc-600/80'
+                  }`}
+                  aria-label="Message"
+                  disabled={status !== ConnectionStatus.CONNECTED}
+                />
+                {inputText.length > MAX_MSG_LENGTH * 0.7 && (
+                  <span className={`absolute right-3 top-1/2 -translate-y-1/2 text-[9px] font-mono tabular-nums ${inputText.length >= MAX_MSG_LENGTH ? 'text-red-400' : 'text-yellow-500'}`} aria-live="polite">
+                    {MAX_MSG_LENGTH - inputText.length}
+                  </span>
+                )}
+              </div>
+
+              <button
+                disabled={!inputText.trim() || status !== ConnectionStatus.CONNECTED}
+                type="submit"
+                className="bg-neon-green text-black p-2.5 rounded-xl hover:bg-green-400 disabled:opacity-40 disabled:cursor-not-allowed transition-all shrink-0"
+                aria-label="Send message"
+              >
+                <Send size={17} />
+              </button>
+            </form>
+          )}
         </div>
       </div>
 
@@ -956,6 +1847,10 @@ const App: React.FC = () => {
         currentMood={prefs.mood} setMood={(m) => updatePref('mood', m)}
         sfx={prefs.sfxEnabled} toggleSfx={() => updatePref('sfxEnabled', !prefs.sfxEnabled)}
         voice={prefs.voiceEnabled} toggleVoice={() => updatePref('voiceEnabled', !prefs.voiceEnabled)}
+        isHost={isHostRef.current}
+        mode={mode}
+        roomFingerprint={mode === 'P2P' && peerId ? getRoomFingerprint([peerId, ...participants.map(p => p.peerId)]) : undefined}
+        onClearChat={() => { setMessages([]); addSystemMsg('CHAT CLEARED LOCALLY'); }}
       />
 
       <QRCodeModal
@@ -979,6 +1874,151 @@ const App: React.FC = () => {
           error={codeModalError}
           onSubmit={handleCodeSubmit}
           onCancel={handleCodeCancel}
+        />
+      )}
+
+      {/* ── Command Palette (Ctrl+K) ── */}
+      <CommandPalette
+        isOpen={showCommandPalette}
+        onClose={() => setShowCommandPalette(false)}
+        onSelectCommand={(cmd) => {
+          setShowCommandPalette(false);
+          if (cmd === '/panic') { triggerPanic(); return; }
+          if (cmd === '/voice') { handleToggleVoiceCall(); return; }
+          if (cmd === '/poll') { setShowPollModal(true); return; }
+          if (cmd === '/whisper') {
+            setIsWhisperMode(w => !w);
+            addSystemMsg(isWhisperMode ? 'WHISPER MODE OFF' : 'WHISPER MODE ON 👻');
+            return;
+          }
+          if (cmd === '/clear') { setMessages([]); addSystemMsg('CHAT CLEARED'); return; }
+          if (['/summary', '/action-items', '/tasks', '/roast', '/vibe'].includes(cmd)) {
+            handleRunAiCommand(cmd);
+            return;
+          }
+          setInputText(cmd + ' ');
+        }}
+        isWhisperMode={isWhisperMode}
+        isInVoice={isInVoiceCall}
+      />
+
+      {/* ── Poll Creation Modal ── */}
+      <PollModal
+        isOpen={showPollModal}
+        onClose={() => setShowPollModal(false)}
+        onCreatePoll={handleCreatePoll}
+      />
+
+      {/* ── Moderation & Policies Modal ── */}
+      <ModerationModal
+        isOpen={showModerationModal}
+        onClose={() => setShowModerationModal(false)}
+        moderationSettings={moderationSettings}
+        onUpdateSettings={handleUpdateModerationSettings}
+        participants={participants}
+        onKickParticipant={handleKickParticipant}
+        onCloseRoom={handleCloseRoom}
+        onOpenAddUser={() => {
+          setConnectModalMode('invite');
+          setShowConnectByUsernameModal(true);
+        }}
+        onSaveContact={(saveUsername, savePeerId) => {
+          saveContactToBook({
+            identityId: `wid_${savePeerId.slice(0, 10)}`,
+            whisperId: `${saveUsername}#000000`,
+            username: saveUsername,
+            publicKey: '',
+            shortTag: '000000',
+            peerId: savePeerId,
+            verified: false,
+            isTrusted: false,
+            blocked: false,
+          }).then(updatedContacts => {
+            setIdentity(prev => ({ ...prev, savedContacts: updatedContacts }));
+            addSystemMsg(`SAVED @${saveUsername.toUpperCase()} TO CONTACTS`);
+          });
+        }}
+      />
+
+      {/* ── Security PIN Lock Modal ── */}
+      <PinLockModal
+        isOpen={showPinModal}
+        mode={pinModalMode}
+        onSuccess={(updatedIdentity) => {
+          if (updatedIdentity) {
+            setIdentity(updatedIdentity);
+          }
+          setShowPinModal(false);
+          addSystemMsg(
+            pinModalMode === 'unlock'
+              ? 'VAULT UNLOCKED'
+              : pinModalMode === 'setup'
+              ? 'SECURITY PIN SET'
+              : 'SECURITY PIN REMOVED'
+          );
+        }}
+        onCancel={() => setShowPinModal(false)}
+        onPanic={triggerPanic}
+      />
+
+      {/* ── WhisperID Cryptographic Identity & Contacts Modal ── */}
+      <WhisperIdModal
+        isOpen={showIdentityModal}
+        onClose={() => setShowIdentityModal(false)}
+        identity={identity}
+        onUpdateIdentity={(updated) => {
+          setIdentity(updated);
+          setPrefs(prev => ({ ...prev, username: updated.username }));
+        }}
+        onOpenPinSetup={() => {
+          setPinModalMode('setup');
+          setShowPinModal(true);
+        }}
+        onOpenPinDisable={() => {
+          setPinModalMode('disable');
+          setShowPinModal(true);
+        }}
+        onLockSession={() => {
+          lockAppSession();
+          setShowIdentityModal(false);
+          setPinModalMode('unlock');
+          setShowPinModal(true);
+        }}
+        onOpenSetupModal={() => setShowSetupModal(true)}
+        onDirectConnectToPeer={(targetPeerId, targetWhisperId) => {
+          handleDirectConnectToPeer(targetPeerId, targetWhisperId);
+        }}
+      />
+
+      {/* ── WhisperID Setup & Mnemonic Recovery Modal ── */}
+      <WhisperIdSetupModal
+        isOpen={showSetupModal}
+        onClose={() => setShowSetupModal(false)}
+        onComplete={(newIdentity) => {
+          setIdentity(newIdentity);
+          setPrefs(prev => ({ ...prev, username: newIdentity.username }));
+          addSystemMsg(`ACTIVE WHISPERID: @${newIdentity.whisperId.toUpperCase()}`);
+        }}
+        initialUsername={identity.username}
+      />
+
+      {/* ── Connect / Add User by Username Modal ── */}
+      <ConnectByUsernameModal
+        isOpen={showConnectByUsernameModal}
+        onClose={() => setShowConnectByUsernameModal(false)}
+        onConnect={(targetPeerId, targetWhisperId) => {
+          handleDirectConnectToPeer(targetPeerId, targetWhisperId);
+        }}
+        savedContacts={identity.savedContacts}
+        mode={connectModalMode}
+      />
+
+      {/* ── Image Lightbox Modal ── */}
+      {lightboxImage && (
+        <LightboxModal
+          imageUrl={lightboxImage.url}
+          imageName={lightboxImage.name}
+          onClose={() => setLightboxImage(null)}
         />
       )}
     </div>

@@ -1,0 +1,8 @@
+User-agent: *
+Allow: /
+
+Disallow: /app
+Disallow: /room
+Disallow: /join
+
+Sitemap: https://whisperlinks.app/sitemap.xml

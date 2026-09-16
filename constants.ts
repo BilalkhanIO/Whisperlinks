@@ -69,13 +69,17 @@ export const MOOD_META: Record<ChatMood, { emoji: string; name: string; tagline:
 };
 
 export const COMMANDS = [
-  { cmd: '/roast',   desc: 'Get roasted by the AI',            icon: '🔥' },
-  { cmd: '/vibe',    desc: 'AI reads the room',                 icon: '📡' },
-  { cmd: '/summary', desc: 'Summarize this conversation',       icon: '📋' },
-  { cmd: '/debate',  desc: 'Debate a topic (e.g. /debate cats)', icon: '⚔️' },
-  { cmd: '/whisper', desc: 'Next message self-destructs in 15s', icon: '👻' },
-  { cmd: '/clear',   desc: 'Clear all messages',                icon: '🗑' },
-  { cmd: '/help',    desc: 'Show available commands',           icon: '❓' },
+  { cmd: '/roast',        desc: 'Get roasted by the AI',                   icon: '🔥' },
+  { cmd: '/vibe',         desc: 'AI reads the room',                        icon: '📡' },
+  { cmd: '/summary',      desc: 'Summarize this conversation',              icon: '📋' },
+  { cmd: '/action-items', desc: 'Extract tasks & action items',             icon: '✅' },
+  { cmd: '/debate',       desc: 'Debate a topic (e.g. /debate cats)',        icon: '⚔️' },
+  { cmd: '/poll',         desc: 'Launch an interactive poll',               icon: '📊' },
+  { cmd: '/voice',        desc: 'Toggle Live WebRTC Voice Room',            icon: '🎙️' },
+  { cmd: '/whisper',      desc: 'Toggle 15s self-destructing messages',     icon: '👻' },
+  { cmd: '/panic',        desc: 'Instant wipe & show disguise workpad',     icon: '🚨' },
+  { cmd: '/clear',        desc: 'Clear all messages',                       icon: '🗑' },
+  { cmd: '/help',         desc: 'Show available commands',                  icon: '❓' },
 ];
 
 export const LOADING_MESSAGES = [

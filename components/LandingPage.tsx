@@ -1,10 +1,11 @@
 import React, { useState, useEffect } from 'react';
-import { Bot, Shield, Zap, Globe, Mic, Cpu, Users, ChevronDown, Settings as SettingsIcon, Lock, ArrowLeft } from 'lucide-react';
+import { Bot, Shield, Zap, Globe, Mic, Cpu, Users, ChevronDown, Settings as SettingsIcon, Lock, ArrowLeft, User, UserPlus, KeyRound } from 'lucide-react';
 import MatrixRain from './MatrixRain';
 import { SettingsPanel } from './SettingsPanel';
 import { InstallBanner } from './InstallPrompt';
 import { ChatMode, ChatLanguage, ChatMood } from '../types';
 import { MOOD_META } from '../constants';
+import { UserIdentity } from '../services/identityService';
 
 interface LandingPageProps {
   username: string;
@@ -22,11 +23,15 @@ interface LandingPageProps {
   toggleSfx: () => void;
   voice: boolean;
   toggleVoice: () => void;
+  identity: UserIdentity;
+  onOpenIdentityModal: () => void;
+  onOpenConnectByUsername: () => void;
 }
 
 export const LandingPage: React.FC<LandingPageProps> = ({
   username, setUsername, onEnter, onNavigate, showSettings, setShowSettings, hasApiKey,
   currentLang, setLang, currentMood, setMood, sfx, toggleSfx, voice, toggleVoice,
+  identity, onOpenIdentityModal, onOpenConnectByUsername,
 }) => {
   const currentPersona = MOOD_META[currentMood];
 
@@ -217,9 +222,33 @@ export const LandingPage: React.FC<LandingPageProps> = ({
       </div>
 
       {/* Title */}
-      <div className="text-center mb-7 animate-slide-up delay-100">
+      <div className="text-center mb-6 animate-slide-up delay-100">
         <h1 className="text-4xl font-black tracking-tight text-white leading-none">WHISPERLINK</h1>
         <p className="text-[11px] font-mono text-neon-green/80 tracking-[0.25em] mt-2 uppercase">Secure Neural Uplink v4.0</p>
+      </div>
+
+      {/* User WhisperID Cryptographic Badge */}
+      <div className="flex justify-center mb-4 animate-slide-up delay-150">
+        <button
+          type="button"
+          onClick={onOpenIdentityModal}
+          className="flex items-center gap-1.5 px-3.5 py-1.5 rounded-full bg-zinc-900/90 border border-zinc-700/80 hover:border-neon-green/50 transition-all text-xs font-mono text-zinc-300 group shadow-xs"
+          title="Manage WhisperID, cryptographic keys, security PIN & contacts"
+        >
+          <User size={12} className="text-neon-green group-hover:scale-110 transition-transform" />
+          <span className="font-semibold text-white">@{identity.username}</span>
+          <span className="text-neon-green font-mono">#{identity.shortTag}</span>
+          {identity.hasPin ? (
+            <span className="flex items-center gap-1 text-[10px] text-neon-green bg-neon-green/10 px-1.5 py-0.5 rounded border border-neon-green/20 ml-1">
+              <Lock size={9} />
+              <span>PIN</span>
+            </span>
+          ) : (
+            <span className="text-[10px] text-zinc-500 ml-1 hover:text-zinc-400">
+              + PIN
+            </span>
+          )}
+        </button>
       </div>
 
       {/* Codename input */}
@@ -265,6 +294,16 @@ export const LandingPage: React.FC<LandingPageProps> = ({
         </button>
       </div>
 
+      {/* Direct Connect via Username button */}
+      <button
+        type="button"
+        onClick={onOpenConnectByUsername}
+        className="w-full mt-3 py-2.5 px-3 rounded-xl bg-zinc-900/90 hover:bg-zinc-800 active:scale-[0.99] text-zinc-300 hover:text-white border border-white/5 hover:border-white/10 text-xs font-mono flex items-center justify-center gap-2 transition-all shadow-sm animate-slide-up delay-350"
+      >
+        <UserPlus size={13} className="text-neon-green" />
+        <span>Connect via WhisperID / Alias</span>
+      </button>
+
       {/* Settings + API key warning */}
       <div className="flex items-center justify-center gap-4 mt-5 animate-slide-up delay-400">
         <button
@@ -274,6 +313,14 @@ export const LandingPage: React.FC<LandingPageProps> = ({
         >
           <SettingsIcon size={13} aria-hidden="true" />
           Configure
+        </button>
+        <button
+          onClick={onOpenIdentityModal}
+          className="flex items-center gap-1.5 text-zinc-500 hover:text-zinc-300 transition-colors text-xs"
+          aria-label="Identity and PIN"
+        >
+          <KeyRound size={13} aria-hidden="true" />
+          PIN & Identity
         </button>
         {!hasApiKey && (
           <span className="text-red-400 text-[10px] bg-red-900/20 px-2.5 py-1 rounded-full border border-red-500/20">

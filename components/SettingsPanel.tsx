@@ -15,10 +15,14 @@ interface SettingsPanelProps {
   toggleSfx: () => void;
   voice: boolean;
   toggleVoice: () => void;
+  roomFingerprint?: string;
+  isHost: boolean;
+  mode: 'AI' | 'P2P';
+  onClearChat?: () => void;
 }
 
 export const SettingsPanel: React.FC<SettingsPanelProps> = ({
-  isOpen, onClose, currentLang, setLang, currentMood, setMood, sfx, toggleSfx, voice, toggleVoice
+  isOpen, onClose, currentLang, setLang, currentMood, setMood, sfx, toggleSfx, voice, toggleVoice, roomFingerprint, isHost, mode, onClearChat
 }) => {
   const closeButtonRef = useRef<HTMLButtonElement>(null);
 
@@ -153,6 +157,32 @@ export const SettingsPanel: React.FC<SettingsPanelProps> = ({
                   <span className="truncate text-[12px]">{lang.replace('_', ' ')}</span>
                 </button>
               ))}
+            </div>
+          </div>
+
+          {/* Actions */}
+          {onClearChat && (
+            <div>
+              <p className="text-[11px] font-mono text-zinc-500 uppercase tracking-widest mb-3">Actions</p>
+              <button
+                onClick={() => { onClearChat(); onClose(); }}
+                className="w-full p-4 rounded-2xl border border-red-900/30 bg-red-950/20 text-red-400 hover:bg-red-900/40 hover:border-red-900/50 transition-all font-mono text-xs uppercase tracking-widest"
+              >
+                Clear Local Chat History
+              </button>
+            </div>
+          )}
+
+          {/* Diagnostics */}
+          <div>
+            <p className="text-[11px] font-mono text-zinc-500 uppercase tracking-widest mb-3">Diagnostics</p>
+            <div className="bg-zinc-900/40 border border-white/5 p-4 rounded-2xl font-mono text-[10px] text-zinc-500 space-y-1.5">
+              {roomFingerprint && <p><span className="text-zinc-400">Room Fingerprint:</span> <br/> <span className="text-neon-purple tracking-widest">{roomFingerprint}</span></p>}
+              <p><span className="text-zinc-400">WebRTC:</span> {typeof RTCPeerConnection !== 'undefined' ? 'Supported' : 'Not Supported'}</p>
+              <p><span className="text-zinc-400">UserAgent:</span> {navigator.userAgent.substring(0, 40)}...</p>
+              <p><span className="text-zinc-400">Microphone:</span> {navigator.mediaDevices?.getUserMedia ? 'Available API' : 'Denied / API Missing'}</p>
+              <p><span className="text-zinc-400">Network:</span> {navigator.onLine ? 'Online' : 'Offline'}</p>
+              <p><span className="text-zinc-400">Cookies:</span> {navigator.cookieEnabled ? 'Enabled' : 'Disabled'}</p>
             </div>
           </div>
 
