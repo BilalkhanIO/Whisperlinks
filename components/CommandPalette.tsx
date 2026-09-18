@@ -1,7 +1,7 @@
 import React, { useState, useEffect, useRef } from 'react';
 import {
   Search, ShieldAlert, Phone, PhoneOff, Paperclip, BarChart2,
-  Ghost, Bot, Sparkles, Download, Settings, Trash2, X, ArrowRight, CornerDownLeft,
+  Ghost, Bot, Sparkles, Download, Settings, Trash2, X,  CornerDownLeft,
   Video, Monitor, Shield, HelpCircle, Lightbulb
 } from 'lucide-react';
 import { Message } from '../types';

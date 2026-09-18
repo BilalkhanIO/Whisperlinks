@@ -1,6 +1,6 @@
 import React, { useState } from 'react';
 import {
-  Shield, KeyRound, Sparkles, Check, Copy, AlertTriangle, ArrowRight, RefreshCw, X, Eye, EyeOff, Lock
+  Shield,  Sparkles, Check, Copy, AlertTriangle, ArrowRight, RefreshCw, X,   
 } from 'lucide-react';
 import {
   createWhisperIdentity,

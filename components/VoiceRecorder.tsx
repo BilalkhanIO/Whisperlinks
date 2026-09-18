@@ -1,5 +1,5 @@
 import React, { useState, useRef, useEffect } from 'react';
-import { Mic, Square, Trash2, Send, Play, Pause, AlertCircle } from 'lucide-react';
+import {  Square, Trash2, Send, Play, Pause, AlertCircle } from 'lucide-react';
 
 interface VoiceRecorderProps {
   onSend: (audioDataUrl: string, duration: number) => void;
@@ -106,8 +106,17 @@ export const VoiceRecorder: React.FC<VoiceRecorderProps> = ({ onSend, onCancel }
       audioPlayerRef.current.pause();
       setIsPlaying(false);
     } else {
-      audioPlayerRef.current.play();
-      setIsPlaying(true);
+      const playPromise = audioPlayerRef.current.play();
+      if (playPromise !== undefined) {
+        playPromise
+          .then(() => setIsPlaying(true))
+          .catch(err => {
+            console.warn('Playback error:', err);
+            setIsPlaying(false);
+          });
+      } else {
+        setIsPlaying(true);
+      }
     }
   };
 

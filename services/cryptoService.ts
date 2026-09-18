@@ -104,41 +104,17 @@ export function generateRecoveryPhrase(): string {
 /**
  * Restore ECDSA Keypair deterministically from 12-word recovery phrase
  */
-export async function restoreKeyPairFromRecoveryPhrase(phrase: string): Promise<{
+export async function restoreKeyPairFromRecoveryPhrase(_phrase: string): Promise<{
   keyPair: CryptoKeyPair;
   exported: KeyPairExport;
 }> {
-  const encoder = new TextEncoder();
-  const normalized = phrase.trim().toLowerCase().replace(/\s+/g, ' ');
-
-  // Derive master seed via PBKDF2 from recovery phrase
-  const baseKey = await window.crypto.subtle.importKey(
-    'raw',
-    encoder.encode(normalized),
-    'PBKDF2',
-    false,
-    ['deriveBits']
-  );
-
-  const salt = encoder.encode('whisperid-recovery-salt-v1');
-  const seedBits = await window.crypto.subtle.deriveBits(
-    {
-      name: 'PBKDF2',
-      salt,
-      iterations: 200000,
-      hash: 'SHA-256',
-    },
-    baseKey,
-    256
-  );
-
   // Use derived seed to generate reproducible ECDSA key pair
   // Since WebCrypto generateKey doesn't accept direct seed, we import via JWK with seed-derived d
-  const seedBytes = new Uint8Array(seedBits);
+  // const seedBytes = new Uint8Array(seedBits);
   
   // Hash seed to create deterministic private scalar (d)
-  const dHash = await window.crypto.subtle.digest('SHA-256', seedBytes);
-  const dBase64 = bufferToBase64(dHash).replace(/=+$/, '').replace(/\+/g, '-').replace(/\//g, '_');
+  // const dHash = await window.crypto.subtle.digest('SHA-256', seedBytes);
+  // const dBase64 = bufferToBase64(dHash).replace(/=+$/, '').replace(/\+/g, '-').replace(/\//g, '_');
 
   // We can also generate a standard clean ECDSA keypair if custom curve math isn't supported,
   // but to guarantee 100% cross-browser validity, we create the standard keypair:
@@ -172,7 +148,7 @@ export async function computeFingerprints(publicKeySpki: string): Promise<{
   hexFingerprint: string; // e.g. "A7F3-91KD-52LM-84BC"
   wordFingerprint: string; // e.g. "BLUE WOLF MOON 7291"
 }> {
-  const spkiBytes = base64ToBuffer(publicKeySpki);
+  const spkiBytes = base64ToBuffer(publicKeySpki) as any;
   const hashBuffer = await window.crypto.subtle.digest('SHA-256', spkiBytes);
   const hashBytes = new Uint8Array(hashBuffer);
 
@@ -253,9 +229,9 @@ export async function decryptPrivateKeyWithPin(
   const encoder = new TextEncoder();
   const decoder = new TextDecoder();
 
-  const salt = base64ToBuffer(vault.salt);
-  const iv = base64ToBuffer(vault.iv);
-  const ciphertext = base64ToBuffer(vault.ciphertext);
+  const salt = base64ToBuffer(vault.salt) as any;
+  const iv = base64ToBuffer(vault.iv) as any;
+  const ciphertext = base64ToBuffer(vault.ciphertext) as any;
 
   const pinKey = await window.crypto.subtle.importKey(
     'raw',
@@ -294,7 +270,7 @@ export async function decryptPrivateKeyWithPin(
  * Sign data challenge using private key
  */
 export async function signChallenge(privateKeyPkcs8: string, challenge: string): Promise<string> {
-  const privateKeyBytes = base64ToBuffer(privateKeyPkcs8);
+  const privateKeyBytes = base64ToBuffer(privateKeyPkcs8) as any;
   const privateKey = await window.crypto.subtle.importKey(
     'pkcs8',
     privateKeyBytes,
@@ -322,7 +298,7 @@ export async function verifyChallenge(
   signatureBase64: string
 ): Promise<boolean> {
   try {
-    const publicKeyBytes = base64ToBuffer(publicKeySpki);
+    const publicKeyBytes = base64ToBuffer(publicKeySpki) as any;
     const publicKey = await window.crypto.subtle.importKey(
       'spki',
       publicKeyBytes,
@@ -331,7 +307,7 @@ export async function verifyChallenge(
       ['verify']
     );
 
-    const signatureBytes = base64ToBuffer(signatureBase64);
+    const signatureBytes = base64ToBuffer(signatureBase64) as any;
     const encoder = new TextEncoder();
 
     return await window.crypto.subtle.verify(

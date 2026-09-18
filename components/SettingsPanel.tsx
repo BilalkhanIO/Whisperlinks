@@ -16,13 +16,13 @@ interface SettingsPanelProps {
   voice: boolean;
   toggleVoice: () => void;
   roomFingerprint?: string;
-  isHost: boolean;
-  mode: 'AI' | 'P2P';
+  isHost?: boolean;
+  mode?: 'AI' | 'P2P';
   onClearChat?: () => void;
 }
 
 export const SettingsPanel: React.FC<SettingsPanelProps> = ({
-  isOpen, onClose, currentLang, setLang, currentMood, setMood, sfx, toggleSfx, voice, toggleVoice, roomFingerprint, isHost, mode, onClearChat
+  isOpen, onClose, currentLang, setLang, currentMood, setMood, sfx, toggleSfx, voice, toggleVoice, roomFingerprint, isHost: _isHost, mode: _mode, onClearChat
 }) => {
   const closeButtonRef = useRef<HTMLButtonElement>(null);
 
@@ -180,7 +180,7 @@ export const SettingsPanel: React.FC<SettingsPanelProps> = ({
               {roomFingerprint && <p><span className="text-zinc-400">Room Fingerprint:</span> <br/> <span className="text-neon-purple tracking-widest">{roomFingerprint}</span></p>}
               <p><span className="text-zinc-400">WebRTC:</span> {typeof RTCPeerConnection !== 'undefined' ? 'Supported' : 'Not Supported'}</p>
               <p><span className="text-zinc-400">UserAgent:</span> {navigator.userAgent.substring(0, 40)}...</p>
-              <p><span className="text-zinc-400">Microphone:</span> {navigator.mediaDevices?.getUserMedia ? 'Available API' : 'Denied / API Missing'}</p>
+              <p><span className="text-zinc-400">Microphone:</span> {!!navigator.mediaDevices?.getUserMedia ? 'Available API' : 'Denied / API Missing'}</p>
               <p><span className="text-zinc-400">Network:</span> {navigator.onLine ? 'Online' : 'Offline'}</p>
               <p><span className="text-zinc-400">Cookies:</span> {navigator.cookieEnabled ? 'Enabled' : 'Disabled'}</p>
             </div>

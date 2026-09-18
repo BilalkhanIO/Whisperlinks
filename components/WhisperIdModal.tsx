@@ -1,8 +1,8 @@
 import React, { useState, useEffect } from 'react';
 import {
-  User, Shield, ShieldCheck, Lock, Unlock, KeyRound, Copy, Check, Plus, Trash2,
-  Phone, UserPlus, X, QrCode, Download, Share2, Star, Eye, EyeOff, AlertTriangle,
-  Radio, BookOpen, Settings, ExternalLink, RefreshCw, Ban
+    ShieldCheck, Lock,  KeyRound, Copy, Check,  Trash2,
+  Phone, X, QrCode, Download, Share2, Star, Eye, EyeOff, 
+  Radio, BookOpen, Settings,  RefreshCw, Ban, UserPlus, 
 } from 'lucide-react';
 import QRCode from 'qrcode';
 import {
@@ -11,7 +11,7 @@ import {
   updatePrivacySettings,
   saveContactToBook,
   removeContactFromBook,
-  toggleTrustContact,
+  
   toggleBlockContact,
   parseWhisperId,
   getPeerIdFromWhisperId,

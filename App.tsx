@@ -41,7 +41,7 @@ import {
   saveContactToBook,
   registerEphemeralPresence,
   heartbeatEphemeralPresence,
-  leaveEphemeralPresence,
+  
   getPeerIdFromWhisperId,
   changeUsername,
   UserIdentity,
@@ -49,7 +49,7 @@ import {
 import {
   Send, Power, Settings, Mic, Loader2, Terminal, QrCode, Share2, Download, Save,
   Bot, BotOff, ShieldAlert, Paperclip, BarChart2, Radio, Phone, PhoneOff, Search, Shield,
-  User, UserPlus, KeyRound, Lock
+  User, UserPlus,  Lock
 } from 'lucide-react';
 
 const MAX_MSG_LENGTH = 500;
@@ -719,7 +719,7 @@ const App: React.FC = () => {
         if (isHostRef.current) broadcastData({ type: 'typing' }, senderPeerId);
         break;
       case 'sys_update':
-        setPrefs(p => ({ ...p, mood: data.mood as ChatMood, language: data.lang as string }));
+        setPrefs(p => ({ ...p, mood: data.mood as ChatMood, language: data.lang as any }));
         if (data.aiEnabled !== undefined) setIsAiEnabled(Boolean(data.aiEnabled));
         addSystemMsg(`HOST SYNC → [${data.mood}]`);
         break;
@@ -742,7 +742,7 @@ const App: React.FC = () => {
             return [...prev, {
               ...incomingVoice,
               sender: SenderType.STRANGER,
-              timestamp: new Date(incomingVoice.timestamp)
+              timestamp: incomingVoice.timestamp ? new Date(incomingVoice.timestamp) : new Date()
             }];
           });
           broadcastData({ type: 'ack', id: incomingVoice.id }, senderPeerId);
@@ -759,7 +759,7 @@ const App: React.FC = () => {
             return [...prev, {
               ...incomingFile,
               sender: SenderType.STRANGER,
-              timestamp: new Date(incomingFile.timestamp)
+              timestamp: incomingFile.timestamp ? new Date(incomingFile.timestamp) : new Date()
             }];
           });
           broadcastData({ type: 'ack', id: incomingFile.id }, senderPeerId);
@@ -776,7 +776,7 @@ const App: React.FC = () => {
             return [...prev, {
               ...incomingPoll,
               sender: SenderType.STRANGER,
-              timestamp: new Date(incomingPoll.timestamp)
+              timestamp: incomingPoll.timestamp ? new Date(incomingPoll.timestamp) : new Date()
             }];
           });
           if (isHostRef.current) broadcastData(data, senderPeerId);
@@ -952,7 +952,7 @@ const App: React.FC = () => {
       if (prefsRef.current.sfxEnabled) playSound('connect');
       addSystemMsg('JOINED LIVE P2P VOICE ROOM 🎙️');
 
-      connectionsRef.current.forEach((conn, pid) => {
+      connectionsRef.current.forEach((_, pid) => {
         if (!peerRef.current) return;
         const mediaCall = peerRef.current.call(pid, stream, {
           metadata: { username: prefsRef.current.username }
@@ -1072,7 +1072,7 @@ const App: React.FC = () => {
         setIsVirtualVideo(isVirtual);
         addSystemMsg(isVirtual ? 'ENCRYPTED AVATAR FEED ACTIVE 🛡️' : 'CAMERA ENABLED 📹');
 
-        connectionsRef.current.forEach((conn, pid) => {
+        connectionsRef.current.forEach((_, pid) => {
           if (!peerRef.current || !voiceLocalStreamRef.current) return;
           peerRef.current.call(pid, voiceLocalStreamRef.current, {
             metadata: { username: prefsRef.current.username, hasVideo: true, isVirtual }
@@ -1161,7 +1161,7 @@ const App: React.FC = () => {
         setIsVirtualVideo(false);
         addSystemMsg(isVirtual ? 'VIRTUAL SCREEN STREAM ACTIVE 🖥️' : 'SCREEN SHARING ACTIVE 🖥️');
 
-        connectionsRef.current.forEach((conn, pid) => {
+        connectionsRef.current.forEach((_, pid) => {
           if (!peerRef.current || !voiceLocalStreamRef.current) return;
           peerRef.current.call(pid, voiceLocalStreamRef.current, {
             metadata: { username: prefsRef.current.username, hasVideo: true, isScreen: true, isVirtual }
@@ -1330,8 +1330,8 @@ const App: React.FC = () => {
   };
 
   // ── Room Moderation & Host Policies ──
-  const handleUpdateModerationSettings = (newSettings: ModerationSettings) => {
-    setModerationSettings(newSettings);
+  const handleUpdateModerationSettings = (newSettings: Partial<ModerationSettings>) => {
+    setModerationSettings(p => ({ ...p, ...newSettings }));
     if (mode === 'P2P') {
       broadcastData({ type: 'mod_update', settings: newSettings });
     }

@@ -35,8 +35,8 @@ export const LiveVoiceRoom: React.FC<LiveVoiceRoomProps> = ({
   isMuted,
   onToggleMute,
   onLeaveCall,
-  participants,
-  currentUsername,
+  participants: _participants,
+  currentUsername: _currentUsername,
   isVideoActive = false,
   isScreenSharing = false,
   onToggleVideo,
@@ -307,14 +307,14 @@ export const LiveVoiceRoom: React.FC<LiveVoiceRoomProps> = ({
                   ) : (
                     <div className="flex flex-col items-center justify-center gap-1 text-zinc-500">
                       <div className="w-10 h-10 rounded-full bg-zinc-800 border border-white/10 flex items-center justify-center text-xs font-mono text-zinc-300">
-                        {rs.username.slice(0, 2).toUpperCase()}
+                        {(rs.username || 'PE').slice(0, 2).toUpperCase()}
                       </div>
-                      <span className="text-[10px] font-mono">{rs.username} (Audio)</span>
+                      <span className="text-[10px] font-mono">{rs.username || 'Peer'} (Audio)</span>
                     </div>
                   )}
 
                   <div className="absolute bottom-2 left-2 flex items-center justify-between right-2 bg-black/70 px-2 py-0.5 rounded-md border border-white/10 text-[10px] font-mono text-zinc-200">
-                    <span className="truncate max-w-[90px]">{rs.username}</span>
+                    <span className="truncate max-w-[90px]">{rs.username || 'Peer'}</span>
                     <div className="flex items-center gap-1.5">
                       <Volume2 size={11} className="text-zinc-400" />
                       <input

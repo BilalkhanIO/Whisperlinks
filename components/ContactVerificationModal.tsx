@@ -1,6 +1,8 @@
 import React, { useState } from 'react';
-import { ShieldCheck, Star, Check, X, Copy, Lock, AlertTriangle, UserCheck } from 'lucide-react';
-import { StoredContact, verifyContactIdentity, toggleTrustContact } from '../services/identityService';
+import { ShieldCheck, Star, Check, X, Copy,   UserCheck } from 'lucide-react';
+import { verifyContactIdentity, toggleTrustContact } from '../services/identityService';
+import { StoredContact } from "../services/whisperDb";
+
 
 interface ContactVerificationModalProps {
   isOpen: boolean;

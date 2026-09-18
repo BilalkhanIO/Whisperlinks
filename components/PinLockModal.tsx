@@ -1,5 +1,5 @@
 import React, { useState, useEffect } from 'react';
-import { Lock, Unlock, Shield, ShieldAlert, KeyRound, Check, X, Delete } from 'lucide-react';
+import { Lock, Unlock,  ShieldAlert, KeyRound, Check,  Delete } from 'lucide-react';
 import { verifyUserPin, setUserPin, removeUserPin, UserIdentity } from '../services/identityService';
 
 interface PinLockModalProps {

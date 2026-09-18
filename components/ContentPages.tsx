@@ -1,5 +1,5 @@
 import React from 'react';
-import { ArrowLeft, Bot, FileText, LifeBuoy, Mail, ShieldCheck, Shield, Lock, Key, HelpCircle, CheckCircle2 } from 'lucide-react';
+import { ArrowLeft, Bot, FileText, LifeBuoy, Mail, ShieldCheck, Shield,   HelpCircle, CheckCircle2 } from 'lucide-react';
 import { AdBanner } from './ads/AdBanner';
 
 interface PageProps {

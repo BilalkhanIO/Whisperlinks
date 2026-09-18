@@ -1,10 +1,10 @@
 import React, { useState, useEffect } from 'react';
 import {
-  UserPlus, Search, Phone, Check, AlertCircle, X, Loader2, Sparkles, BookOpen,
-  Radio, ShieldCheck, Star
+  UserPlus, Search, Phone, Check,  X, Loader2,  BookOpen,
+  Radio,  Star
 } from 'lucide-react';
 import {
-  parseWhisperId,
+  
   lookupEphemeralPeers,
   getPeerIdFromWhisperId,
 } from '../services/identityService';

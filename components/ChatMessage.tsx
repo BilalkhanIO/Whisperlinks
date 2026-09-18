@@ -1,9 +1,9 @@
-import React, { memo, useState, useEffect, useRef } from 'react';
+import React, { memo, useState, useEffect, useRef, useMemo } from 'react';
 import { Message, SenderType } from '../types';
 import { EncryptionEffect } from './EncryptionEffect';
 import {
   ShieldCheck, Copy, Check, CheckCheck, CornerUpLeft, Ghost,
-  Play, Pause, Download, FileText, BarChart2, CheckCircle2, Volume2, Languages
+  Play, Pause, Download, FileText, BarChart2, CheckCircle2,  Languages
 } from 'lucide-react';
 import { getInitials } from '../utils';
 
@@ -74,8 +74,17 @@ export const ChatMessage: React.FC<ChatMessageProps> = memo(({
       setIsPlayingAudio(false);
     } else {
       audioRef.current.playbackRate = playbackRate;
-      audioRef.current.play();
-      setIsPlayingAudio(true);
+      const playPromise = audioRef.current.play();
+      if (playPromise !== undefined) {
+        playPromise
+          .then(() => setIsPlayingAudio(true))
+          .catch(err => {
+            console.warn('Audio play interrupted or not allowed:', err);
+            setIsPlayingAudio(false);
+          });
+      } else {
+        setIsPlayingAudio(true);
+      }
     }
   };
 
@@ -89,18 +98,26 @@ export const ChatMessage: React.FC<ChatMessageProps> = memo(({
   };
 
   const handleCopy = async () => {
-    await navigator.clipboard.writeText(message.text);
-    setCopied(true);
-    setTimeout(() => setCopied(false), 2000);
+    try {
+      if (navigator.clipboard?.writeText) {
+        await navigator.clipboard.writeText(message.text || '');
+        setCopied(true);
+        setTimeout(() => setCopied(false), 2000);
+      }
+    } catch (e) {
+      console.warn('Clipboard write failed:', e);
+    }
   };
 
   const formatFileSize = (bytes: number) => {
+    if (!bytes || isNaN(bytes) || bytes < 0) return '0 B';
     if (bytes < 1024) return `${bytes} B`;
     if (bytes < 1024 * 1024) return `${(bytes / 1024).toFixed(1)} KB`;
     return `${(bytes / (1024 * 1024)).toFixed(1)} MB`;
   };
 
   const formatAudioTime = (seconds: number) => {
+    if (!seconds || isNaN(seconds) || seconds < 0) return '0:00';
     const m = Math.floor(seconds / 60);
     const s = Math.floor(seconds % 60);
     return `${m}:${s.toString().padStart(2, '0')}`;

@@ -18,15 +18,15 @@ import {
   Underline,
   AlignLeft,
   List,
-  MessageSquare,
-  HelpCircle,
-  Clock,
-  Check,
+  
+  
+  
+  
   Plus,
   Play,
-  Copy,
+  
   SlidersHorizontal,
-  ExternalLink,
+  
 } from 'lucide-react';
 
 interface PanicScreenProps {
@@ -353,7 +353,7 @@ CREATE INDEX idx_audit_action ON security_audit_logs (action_type);`,
                 <thead>
                   <tr className="bg-[#f2f4f8] text-slate-500 font-mono text-[11px]">
                     <th className="w-10 border border-slate-300 p-1 text-center font-normal bg-slate-200/70"></th>
-                    {['A', 'B', 'C', 'D', 'E', 'F', 'G'].map((col, idx) => (
+                    {['A', 'B', 'C', 'D', 'E', 'F', 'G'].map((col, _idx) => (
                       <th key={col} className="border border-slate-300 px-3 py-1 font-semibold text-center min-w-[130px]">
                         {col}
                       </th>

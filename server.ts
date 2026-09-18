@@ -1,4 +1,4 @@
-import express from 'express';
+import express, { Request, Response, NextFunction } from 'express';
 import path from 'path';
 import { createServer as createViteServer } from 'vite';
 import { GoogleGenAI, Modality } from '@google/genai';
@@ -8,9 +8,9 @@ import { LANGUAGE_PROMPTS, MOOD_INSTRUCTIONS } from './constants.ts';
 
 dotenv.config();
 
-let genAI = null;
+let genAI: GoogleGenAI | null = null;
 if (process.env.API_KEY || process.env.GEMINI_API_KEY) {
-  genAI = new GoogleGenAI({ apiKey: process.env.API_KEY || process.env.GEMINI_API_KEY });
+  genAI = new GoogleGenAI({ apiKey: (process.env.API_KEY || process.env.GEMINI_API_KEY) as string });
 }
 
 // Candidate models in order of stability and responsiveness
@@ -56,7 +56,7 @@ async function createServer() {
   app.use(express.json({ limit: '10mb' }));
 
   // Security headers (allow iframe embedding in AI Studio preview)
-  app.use((req, res, next) => {
+  app.use((_req: Request, res: Response, next: NextFunction) => {
     res.setHeader('X-Content-Type-Options', 'nosniff');
     res.setHeader('Referrer-Policy', 'strict-origin-when-cross-origin');
     next();
@@ -88,7 +88,7 @@ async function createServer() {
   }, 60 * 1000);
 
   // Register ephemeral presence (handles POST registration and responds cleanly to checks)
-  app.all('/api/presence/register', (req, res) => {
+  app.all('/api/presence/register', (req: Request, res: Response) => {
     if (req.method !== 'POST') {
       return res.json({ success: true, message: 'Presence endpoint ready' });
     }
@@ -115,7 +115,7 @@ async function createServer() {
   });
 
   // Heartbeat presence refresh
-  app.all('/api/presence/heartbeat', (req, res) => {
+  app.all('/api/presence/heartbeat', (req: Request, res: Response) => {
     if (req.method !== 'POST') {
       return res.json({ success: true, renewed: false });
     }
@@ -132,7 +132,7 @@ async function createServer() {
   });
 
   // Deregister presence on leave / logout
-  app.all('/api/presence/leave', (req, res) => {
+  app.all('/api/presence/leave', (req: Request, res: Response) => {
     const { whisperId } = req.body || {};
     if (whisperId) {
       ephemeralNodes.delete(whisperId.toLowerCase());
@@ -141,7 +141,7 @@ async function createServer() {
   });
 
   // Ephemeral lookup by username or WhisperID
-  app.get('/api/presence/lookup', (req, res) => {
+  app.get('/api/presence/lookup', (req: Request, res: Response) => {
     const query = ((req.query.query as string) || '').trim().toLowerCase().replace(/^@/, '');
     if (!query) return res.json({ results: [] });
 
@@ -177,7 +177,7 @@ async function createServer() {
     res.json({ results: results.slice(0, 10) });
   });
 
-  app.post('/api/gemini/init', async (req, res) => {
+  app.post('/api/gemini/init', async (req: Request, res: Response) => {
     try {
       const { mood = 'CASUAL', lang = 'en' } = req.body;
       const client = getClient();
@@ -214,7 +214,7 @@ async function createServer() {
     }
   });
   
-  app.post('/api/gemini/send', async (req, res) => {
+  app.post('/api/gemini/send', async (req: Request, res: Response) => {
     try {
       const { message } = req.body;
       const sessionId = (req.headers['x-session-id'] || req.ip || 'default') as string;
@@ -285,7 +285,7 @@ async function createServer() {
     }
   });
   
-  app.post('/api/gemini/stream', async (req, res) => {
+  app.post('/api/gemini/stream', async (req: Request, res: Response) => {
     try {
       const { message } = req.body;
       const sessionId = (req.headers['x-session-id'] || req.ip || 'default') as string;
@@ -363,7 +363,7 @@ async function createServer() {
     }
   });
   
-  app.post('/api/gemini/quick', async (req, res) => {
+  app.post('/api/gemini/quick', async (req: Request, res: Response) => {
     try {
       const { prompt } = req.body;
       const client = getClient();
@@ -390,7 +390,7 @@ async function createServer() {
     }
   });
 
-  app.post('/api/gemini/replies', async (req, res) => {
+  app.post('/api/gemini/replies', async (req: Request, res: Response) => {
     try {
       const { lastMessage } = req.body;
       const client = getClient();
@@ -422,7 +422,7 @@ Return ONLY a valid JSON array, no markdown: ["reply1","reply2","reply3"]`,
     }
   });
   
-  app.post('/api/gemini/speech', async (req, res) => {
+  app.post('/api/gemini/speech', async (req: Request, res: Response) => {
     try {
       const { text, mood = 'CASUAL' } = req.body;
       const client = getClient();
@@ -460,14 +460,14 @@ Return ONLY a valid JSON array, no markdown: ["reply1","reply2","reply3"]`,
     }
   });
   
-  app.post('/api/gemini/reset', (req, res) => {
+  app.post('/api/gemini/reset', (req: Request, res: Response) => {
     const sessionId = req.headers['x-session-id'] || req.ip || 'default';
-    sessions.delete(sessionId);
+    sessions.delete(sessionId as string);
     res.json({ success: true });
   });
 
   // Dedicated AI meeting assistant endpoints
-  app.post('/api/gemini/summary', async (req, res) => {
+  app.post('/api/gemini/summary', async (req: Request, res: Response) => {
     try {
       const { chatHistory } = req.body;
       const client = getClient();
@@ -491,7 +491,7 @@ Return ONLY a valid JSON array, no markdown: ["reply1","reply2","reply3"]`,
     }
   });
 
-  app.post('/api/gemini/tasks', async (req, res) => {
+  app.post('/api/gemini/tasks', async (req: Request, res: Response) => {
     try {
       const { chatHistory } = req.body;
       const client = getClient();
@@ -515,7 +515,7 @@ Return ONLY a valid JSON array, no markdown: ["reply1","reply2","reply3"]`,
     }
   });
 
-  app.post('/api/gemini/idea', async (req, res) => {
+  app.post('/api/gemini/idea', async (req: Request, res: Response) => {
     try {
       const { topic } = req.body;
       const client = getClient();
@@ -539,7 +539,7 @@ Return ONLY a valid JSON array, no markdown: ["reply1","reply2","reply3"]`,
     }
   });
 
-  app.post('/api/gemini/translate', async (req, res) => {
+  app.post('/api/gemini/translate', async (req: Request, res: Response) => {
     try {
       const { text, targetLang = 'ENGLISH' } = req.body;
       const client = getClient();
@@ -564,7 +564,7 @@ Return ONLY a valid JSON array, no markdown: ["reply1","reply2","reply3"]`,
   });
 
   // Alias /api/ai/* to /api/gemini/*
-  app.use('/api/ai', (req, res) => {
+  app.use('/api/ai', (req: Request, res: Response) => {
     const target = req.originalUrl.replace('/api/ai', '/api/gemini');
     res.redirect(307, target);
   });
@@ -573,7 +573,7 @@ Return ONLY a valid JSON array, no markdown: ["reply1","reply2","reply3"]`,
     const distPath = path.join(process.cwd(), 'dist');
     app.use(express.static(distPath));
     // fallback for SPA in Express v5
-    app.get('*all', (req, res) => {
+    app.get('*all', (_req: Request, res: Response) => {
       res.sendFile(path.join(distPath, 'index.html'));
     });
   } else {
