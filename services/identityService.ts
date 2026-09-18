@@ -544,7 +544,8 @@ export async function registerEphemeralPresence(
   identity: UserIdentity,
   peerId: string
 ): Promise<void> {
-  if (identity.privacy.invisibleMode) {
+  if (!identity?.whisperId || !peerId) return;
+  if (identity.privacy?.invisibleMode) {
     try {
       await fetch('/api/presence/leave', {
         method: 'POST',
@@ -556,17 +557,20 @@ export async function registerEphemeralPresence(
   }
 
   try {
-    await fetch('/api/presence/register', {
+    const res = await fetch('/api/presence/register', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({
-        username: identity.username,
+        username: identity.username || 'Ghost',
         whisperId: identity.whisperId,
         identityId: identity.identityId,
         peerId,
-        isInvisible: identity.privacy.invisibleMode,
+        isInvisible: Boolean(identity.privacy?.invisibleMode),
       }),
     });
+    if (!res.ok && res.status !== 404) {
+      console.warn('Presence registration response status:', res.status);
+    }
   } catch (e) {
     console.warn('Presence registration notice:', e);
   }

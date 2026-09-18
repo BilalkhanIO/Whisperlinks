@@ -1,4 +1,5 @@
 import express from 'express';
+import path from 'path';
 import { createServer as createViteServer } from 'vite';
 import { GoogleGenAI, Modality } from '@google/genai';
 import dotenv from 'dotenv';
@@ -54,10 +55,9 @@ async function createServer() {
   app.set('trust proxy', 1);
   app.use(express.json({ limit: '10mb' }));
 
-  // Security headers
+  // Security headers (allow iframe embedding in AI Studio preview)
   app.use((req, res, next) => {
     res.setHeader('X-Content-Type-Options', 'nosniff');
-    res.setHeader('X-Frame-Options', 'SAMEORIGIN');
     res.setHeader('Referrer-Policy', 'strict-origin-when-cross-origin');
     next();
   });
@@ -87,9 +87,12 @@ async function createServer() {
     }
   }, 60 * 1000);
 
-  // Register ephemeral presence
-  app.post('/api/presence/register', (req, res) => {
-    const { username, whisperId, identityId, peerId, isInvisible = false } = req.body;
+  // Register ephemeral presence (handles POST registration and responds cleanly to checks)
+  app.all('/api/presence/register', (req, res) => {
+    if (req.method !== 'POST') {
+      return res.json({ success: true, message: 'Presence endpoint ready' });
+    }
+    const { username, whisperId, identityId, peerId, isInvisible = false } = req.body || {};
     if (!whisperId || !peerId) {
       return res.status(400).json({ error: 'Missing parameters' });
     }
@@ -112,8 +115,11 @@ async function createServer() {
   });
 
   // Heartbeat presence refresh
-  app.post('/api/presence/heartbeat', (req, res) => {
-    const { whisperId, peerId } = req.body;
+  app.all('/api/presence/heartbeat', (req, res) => {
+    if (req.method !== 'POST') {
+      return res.json({ success: true, renewed: false });
+    }
+    const { whisperId, peerId } = req.body || {};
     if (!whisperId) return res.status(400).json({ error: 'Missing whisperId' });
 
     const existing = ephemeralNodes.get(whisperId.toLowerCase());
@@ -126,8 +132,8 @@ async function createServer() {
   });
 
   // Deregister presence on leave / logout
-  app.post('/api/presence/leave', (req, res) => {
-    const { whisperId } = req.body;
+  app.all('/api/presence/leave', (req, res) => {
+    const { whisperId } = req.body || {};
     if (whisperId) {
       ephemeralNodes.delete(whisperId.toLowerCase());
     }
@@ -564,10 +570,11 @@ Return ONLY a valid JSON array, no markdown: ["reply1","reply2","reply3"]`,
   });
 
   if (process.env.NODE_ENV === 'production') {
-    app.use(express.static('dist'));
-    // fallback for SPA
-    app.get(/.*/, (req, res) => {
-      res.sendFile('dist/index.html', { root: '.' });
+    const distPath = path.join(process.cwd(), 'dist');
+    app.use(express.static(distPath));
+    // fallback for SPA in Express v5
+    app.get('*all', (req, res) => {
+      res.sendFile(path.join(distPath, 'index.html'));
     });
   } else {
     const vite = await createViteServer({
