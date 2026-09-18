@@ -16,6 +16,12 @@
     <loc>https://whisperlinks.app/terms</loc>
   </url>
   <url>
+    <loc>https://whisperlinks.app/security</loc>
+  </url>
+  <url>
+    <loc>https://whisperlinks.app/faq</loc>
+  </url>
+  <url>
     <loc>https://whisperlinks.app/contact</loc>
   </url>
 </urlset>

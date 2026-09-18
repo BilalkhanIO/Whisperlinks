@@ -52,10 +52,19 @@ const aiRateLimiter = rateLimit({
 async function createServer() {
   const app = express();
   app.set('trust proxy', 1);
-  app.use(express.json());
+  app.use(express.json({ limit: '10mb' }));
+
+  // Security headers
+  app.use((req, res, next) => {
+    res.setHeader('X-Content-Type-Options', 'nosniff');
+    res.setHeader('X-Frame-Options', 'SAMEORIGIN');
+    res.setHeader('Referrer-Policy', 'strict-origin-when-cross-origin');
+    next();
+  });
 
   // Apply rate limiter to Gemini AI routes
   app.use('/api/gemini/', aiRateLimiter);
+  app.use('/api/ai/', aiRateLimiter);
 
   // ── Ephemeral Rendezvous & Presence Cache (Memory-Only, 5-minute TTL) ──
   interface EphemeralNode {
@@ -449,6 +458,109 @@ Return ONLY a valid JSON array, no markdown: ["reply1","reply2","reply3"]`,
     const sessionId = req.headers['x-session-id'] || req.ip || 'default';
     sessions.delete(sessionId);
     res.json({ success: true });
+  });
+
+  // Dedicated AI meeting assistant endpoints
+  app.post('/api/gemini/summary', async (req, res) => {
+    try {
+      const { chatHistory } = req.body;
+      const client = getClient();
+      if (!client) return res.status(500).json({ error: 'API key missing' });
+      const prompt = `You are an AI meeting and conversation assistant for an encrypted private room. Provide a concise, structured 2-3 sentence executive summary of the conversation below. Be objective, accurate, and direct:\n\n${chatHistory || 'No conversation provided.'}`;
+      let text = '';
+      for (const model of TEXT_MODELS) {
+        try {
+          const resp = await client.models.generateContent({
+            model,
+            contents: prompt,
+            config: { temperature: 0.3 }
+          });
+          text = resp.text || '';
+          if (text) break;
+        } catch { /* try next */ }
+      }
+      res.json({ summary: text || 'No discussion points to summarize.' });
+    } catch {
+      res.status(500).json({ error: 'Failed to generate summary' });
+    }
+  });
+
+  app.post('/api/gemini/tasks', async (req, res) => {
+    try {
+      const { chatHistory } = req.body;
+      const client = getClient();
+      if (!client) return res.status(500).json({ error: 'API key missing' });
+      const prompt = `You are an AI task extractor. Extract all actionable items, tasks, agreements, or next steps from this chat log in clear markdown bullet points. If no tasks exist, state "No explicit action items found.":\n\n${chatHistory || 'No conversation provided.'}`;
+      let text = '';
+      for (const model of TEXT_MODELS) {
+        try {
+          const resp = await client.models.generateContent({
+            model,
+            contents: prompt,
+            config: { temperature: 0.3 }
+          });
+          text = resp.text || '';
+          if (text) break;
+        } catch { /* try next */ }
+      }
+      res.json({ tasks: text || 'No action items identified.' });
+    } catch {
+      res.status(500).json({ error: 'Failed to extract tasks' });
+    }
+  });
+
+  app.post('/api/gemini/idea', async (req, res) => {
+    try {
+      const { topic } = req.body;
+      const client = getClient();
+      if (!client) return res.status(500).json({ error: 'API key missing' });
+      const prompt = `Brainstorm 4 creative, innovative angles, solutions, or discussion starters for this topic: "${topic || 'Future of private communications'}". Keep each item under 20 words. Format with clean bullet points.`;
+      let text = '';
+      for (const model of TEXT_MODELS) {
+        try {
+          const resp = await client.models.generateContent({
+            model,
+            contents: prompt,
+            config: { temperature: 0.8 }
+          });
+          text = resp.text || '';
+          if (text) break;
+        } catch { /* try next */ }
+      }
+      res.json({ ideas: text || 'No ideas generated.' });
+    } catch {
+      res.status(500).json({ error: 'Failed to generate ideas' });
+    }
+  });
+
+  app.post('/api/gemini/translate', async (req, res) => {
+    try {
+      const { text, targetLang = 'ENGLISH' } = req.body;
+      const client = getClient();
+      if (!client) return res.status(500).json({ error: 'API key missing' });
+      const prompt = `Translate the following text into ${targetLang}. Return ONLY the direct translation without preamble or quotation marks:\n\n${text}`;
+      let translated = '';
+      for (const model of TEXT_MODELS) {
+        try {
+          const resp = await client.models.generateContent({
+            model,
+            contents: prompt,
+            config: { temperature: 0.2 }
+          });
+          translated = resp.text || '';
+          if (translated) break;
+        } catch { /* try next */ }
+      }
+      res.json({ translation: translated || text });
+    } catch {
+      res.status(500).json({ error: 'Failed to translate' });
+    }
+  });
+
+  // Alias /api/ai/* to /api/gemini/*
+  app.use('/api/ai', (req, res) => {
+    const target = req.originalUrl.replace('/api/ai', '/api/gemini');
+    res.redirect(307, target);
   });
 
   if (process.env.NODE_ENV === 'production') {

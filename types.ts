@@ -17,6 +17,8 @@ export interface Message {
   expiresAt?: number;
   status?: 'sent' | 'delivered';
   type?: 'text' | 'voice' | 'file' | 'image' | 'poll';
+  translatedText?: string;
+  translatedLang?: string;
   voiceData?: {
     duration: number;
     dataUrl: string;
@@ -26,6 +28,7 @@ export interface Message {
     size: number;
     mimeType: string;
     dataUrl: string;
+    sha256?: string;
   };
   pollData?: {
     id: string;

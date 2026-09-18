@@ -66,7 +66,7 @@ export const VoiceRecorder: React.FC<VoiceRecorderProps> = ({ onSend, onCancel }
           setDuration(d => d + 1);
         }, 1000);
       } catch (err: any) {
-        console.error('Microphone error:', err);
+        console.warn('Microphone access unavailable or denied:', err);
         setError('Microphone access denied or unavailable.');
         setIsRecording(false);
       }

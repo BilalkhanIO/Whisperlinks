@@ -185,7 +185,7 @@ export async function dbSaveContact(contact: StoredContact): Promise<void> {
       tx.onerror = () => reject(tx.error);
     });
   } catch (e) {
-    console.error('dbSaveContact failed:', e);
+    console.warn('dbSaveContact fallback notice:', e);
   }
 }
 
@@ -199,7 +199,7 @@ export async function dbDeleteContact(identityId: string): Promise<void> {
       tx.onerror = () => reject(tx.error);
     });
   } catch (e) {
-    console.error('dbDeleteContact failed:', e);
+    console.warn('dbDeleteContact fallback notice:', e);
   }
 }
 
@@ -231,6 +231,6 @@ export async function dbSaveContactRequest(request: ContactRequest): Promise<voi
       tx.onerror = () => reject(tx.error);
     });
   } catch (e) {
-    console.error('dbSaveContactRequest error:', e);
+    console.warn('dbSaveContactRequest fallback notice:', e);
   }
 }

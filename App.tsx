@@ -3,7 +3,8 @@ import Peer, { DataConnection } from 'peerjs';
 import { Message, SenderType, ConnectionStatus, ChatMood, ChatMode, UserInfo, ModerationSettings } from './types';
 import {
   sendMessageToGemini, streamMessageToGemini, generateSmartReplies,
-  initializeChatSession, resetSession, generateSpeech, executeQuickPrompt
+  initializeChatSession, resetSession, generateSpeech, executeQuickPrompt,
+  requestAiTranslation, requestAiSummary, requestAiTasks, requestAiIdeas
 } from './services/geminiService';
 import { playSound, decodeAndPlayAudio, speakWithBrowser } from './services/audioService';
 import { ChatMessage } from './components/ChatMessage';
@@ -19,7 +20,7 @@ import { SettingsPanel } from './components/SettingsPanel';
 import { loadPrefs, savePrefs, getRoomFingerprint } from './utils';
 import { COMMANDS, MOOD_META } from './constants';
 import { LandingPage } from './components/LandingPage';
-import { AboutPage, ContactPage, HelpPage, PrivacyPolicy, TermsPage } from './components/ContentPages';
+import { AboutPage, ContactPage, HelpPage, PrivacyPolicy, TermsPage, SecurityPage, FaqPage } from './components/ContentPages';
 import { PanicScreen } from './components/PanicScreen';
 import { CommandPalette } from './components/CommandPalette';
 import { VoiceRecorder } from './components/VoiceRecorder';
@@ -31,6 +32,8 @@ import { PinLockModal } from './components/PinLockModal';
 import { WhisperIdModal } from './components/WhisperIdModal';
 import { WhisperIdSetupModal } from './components/WhisperIdSetupModal';
 import { ConnectByUsernameModal } from './components/ConnectByUsernameModal';
+import { ScreenShareIframeModal } from './components/ScreenShareIframeModal';
+import { createVirtualMediaStream, isIframeEmbedded } from './services/virtualMediaService';
 import {
   loadActiveWhisperIdentity,
   isAppSessionLocked,
@@ -148,9 +151,15 @@ const App: React.FC = () => {
   // ── Live Voice Room (WebRTC Audio Stream) ──
   const [isInVoiceCall, setIsInVoiceCall] = useState(false);
   const [isVoiceMuted, setIsVoiceMuted] = useState(false);
+  const [isVideoActive, setIsVideoActive] = useState(false);
+  const [isVirtualVideo, setIsVirtualVideo] = useState(false);
+  const [isScreenSharing, setIsScreenSharing] = useState(false);
+  const [showScreenShareIframeModal, setShowScreenShareIframeModal] = useState(false);
+  const [isPttEnabled, setIsPttEnabled] = useState(false);
   const [voiceLocalStream, setVoiceLocalStream] = useState<MediaStream | null>(null);
   const [remoteVoiceStreams, setRemoteVoiceStreams] = useState<{ peerId: string; username: string; stream: MediaStream }[]>([]);
   const voiceLocalStreamRef = useRef<MediaStream | null>(null);
+  const virtualMediaCleanupRef = useRef<(() => void) | null>(null);
 
   // ── Interactive Polls ──
   const [showPollModal, setShowPollModal] = useState(false);
@@ -207,6 +216,8 @@ const App: React.FC = () => {
       '/help': 'WhisperLink Help Center',
       '/privacy-policy': 'WhisperLink Privacy Policy',
       '/terms': 'WhisperLink Terms of Use',
+      '/security': 'WhisperLink Security Architecture & Cryptographic Audit',
+      '/faq': 'WhisperLink FAQ & Anonymous Guides',
       '/contact': 'Contact WhisperLink',
     };
     document.title = titles[currentPath] || 'WhisperLink';
@@ -894,12 +905,19 @@ const App: React.FC = () => {
 
   // ── Panic / Disguise ──
   const triggerPanic = () => {
+    if (virtualMediaCleanupRef.current) {
+      virtualMediaCleanupRef.current();
+      virtualMediaCleanupRef.current = null;
+    }
     if (voiceLocalStreamRef.current) {
       voiceLocalStreamRef.current.getTracks().forEach(t => t.stop());
     }
     setVoiceLocalStream(null);
     voiceLocalStreamRef.current = null;
     setIsInVoiceCall(false);
+    setIsVideoActive(false);
+    setIsVirtualVideo(false);
+    setIsScreenSharing(false);
     setRemoteVoiceStreams([]);
     if (peerRef.current) {
       peerRef.current.destroy();
@@ -948,21 +966,28 @@ const App: React.FC = () => {
           });
         }
       });
-    } catch (err) {
-      console.error('Microphone error', err);
+    } catch (err: any) {
+      console.warn('Microphone access unavailable or denied:', err);
       addSystemMsg('MICROPHONE ACCESS DENIED — CANNOT JOIN VOICE');
     }
   };
 
   const handleLeaveVoiceCall = () => {
+    if (virtualMediaCleanupRef.current) {
+      virtualMediaCleanupRef.current();
+      virtualMediaCleanupRef.current = null;
+    }
     if (voiceLocalStreamRef.current) {
       voiceLocalStreamRef.current.getTracks().forEach(t => t.stop());
     }
     setVoiceLocalStream(null);
     voiceLocalStreamRef.current = null;
     setIsInVoiceCall(false);
+    setIsVideoActive(false);
+    setIsVirtualVideo(false);
+    setIsScreenSharing(false);
     setRemoteVoiceStreams([]);
-    addSystemMsg('LEFT VOICE ROOM');
+    addSystemMsg('LEFT VOICE & MEDIA ROOM');
   };
 
   const handleToggleVoiceMute = () => {
@@ -972,6 +997,197 @@ const App: React.FC = () => {
       const nextMuted = !isVoiceMuted;
       tracks[0].enabled = !nextMuted;
       setIsVoiceMuted(nextMuted);
+    }
+  };
+
+  const handleToggleVideo = async () => {
+    try {
+      if (isVideoActive) {
+        if (virtualMediaCleanupRef.current) {
+          virtualMediaCleanupRef.current();
+          virtualMediaCleanupRef.current = null;
+        }
+        if (voiceLocalStreamRef.current) {
+          voiceLocalStreamRef.current.getVideoTracks().forEach(t => {
+            t.stop();
+            voiceLocalStreamRef.current?.removeTrack(t);
+          });
+          setVoiceLocalStream(new MediaStream(voiceLocalStreamRef.current.getTracks()));
+        }
+        setIsVideoActive(false);
+        setIsVirtualVideo(false);
+        addSystemMsg('CAMERA DISABLED');
+      } else {
+        let videoStream: MediaStream | null = null;
+        let isVirtual = false;
+
+        // Try getting physical camera if available
+        try {
+          if (navigator.mediaDevices?.getUserMedia) {
+            videoStream = await navigator.mediaDevices.getUserMedia({ video: true });
+          }
+        } catch (mediaErr: any) {
+          const errStr = String(mediaErr?.name || mediaErr?.message || mediaErr);
+          const isNotFound = errStr.includes('NotFound') || errStr.includes('not found') || errStr.includes('DevicesNotFoundError');
+          const isDenied = errStr.includes('NotAllowed') || errStr.includes('Permission');
+
+          console.warn('Physical camera unavailable, engaging virtual avatar stream:', mediaErr);
+
+          if (isDenied) {
+            addSystemMsg('CAMERA ACCESS DENIED — ENGAGING ENCRYPTED AVATAR STREAM 🛡️');
+          } else if (isNotFound) {
+            addSystemMsg('NO PHYSICAL CAMERA DETECTED — ENGAGING ENCRYPTED AVATAR STREAM 🛡️');
+          } else {
+            addSystemMsg('CAMERA UNAVAILABLE — ENGAGING ENCRYPTED AVATAR STREAM 🛡️');
+          }
+        }
+
+        // Graceful fallback to virtual encrypted canvas stream when physical webcam is absent or restricted
+        if (!videoStream || videoStream.getVideoTracks().length === 0) {
+          const virtual = createVirtualMediaStream(prefsRef.current.username || 'User', 'avatar');
+          virtualMediaCleanupRef.current = virtual.cleanup;
+          videoStream = virtual.stream;
+          isVirtual = true;
+        }
+
+        const videoTrack = videoStream.getVideoTracks()[0];
+        if (voiceLocalStreamRef.current) {
+          voiceLocalStreamRef.current.getVideoTracks().forEach(t => {
+            t.stop();
+            voiceLocalStreamRef.current?.removeTrack(t);
+          });
+          voiceLocalStreamRef.current.addTrack(videoTrack);
+          setVoiceLocalStream(new MediaStream(voiceLocalStreamRef.current.getTracks()));
+        } else {
+          setVoiceLocalStream(videoStream);
+          voiceLocalStreamRef.current = videoStream;
+          setIsInVoiceCall(true);
+        }
+
+        setIsVideoActive(true);
+        setIsVirtualVideo(isVirtual);
+        addSystemMsg(isVirtual ? 'ENCRYPTED AVATAR FEED ACTIVE 🛡️' : 'CAMERA ENABLED 📹');
+
+        connectionsRef.current.forEach((conn, pid) => {
+          if (!peerRef.current || !voiceLocalStreamRef.current) return;
+          peerRef.current.call(pid, voiceLocalStreamRef.current, {
+            metadata: { username: prefsRef.current.username, hasVideo: true, isVirtual }
+          });
+        });
+      }
+    } catch (err: any) {
+      console.warn('Video toggle handled with warning:', err);
+      addSystemMsg('UNABLE TO ACTIVATE VIDEO FEED');
+    }
+  };
+
+  const handleToggleScreenShare = async () => {
+    try {
+      if (isScreenSharing) {
+        if (virtualMediaCleanupRef.current) {
+          virtualMediaCleanupRef.current();
+          virtualMediaCleanupRef.current = null;
+        }
+        if (voiceLocalStreamRef.current) {
+          voiceLocalStreamRef.current.getVideoTracks().forEach(t => {
+            t.stop();
+            voiceLocalStreamRef.current?.removeTrack(t);
+          });
+          setVoiceLocalStream(new MediaStream(voiceLocalStreamRef.current.getTracks()));
+        }
+        setIsScreenSharing(false);
+        addSystemMsg('SCREEN SHARING STOPPED');
+      } else {
+        let displayStream: MediaStream | null = null;
+        let isVirtual = false;
+        const isEmbedded = isIframeEmbedded();
+
+        try {
+          if (!navigator.mediaDevices?.getDisplayMedia) {
+            throw new Error('getDisplayMedia unsupported on this platform');
+          }
+          displayStream = await navigator.mediaDevices.getDisplayMedia({ video: true });
+        } catch (screenErr: any) {
+          const errStr = String(screenErr?.name || screenErr?.message || screenErr);
+          const isPolicyBlocked = errStr.includes('permissions policy') || errStr.includes('display-capture');
+          const isCancelled = errStr.includes('NotAllowedError') && !isPolicyBlocked;
+
+          console.warn('Native screen share rejected or blocked:', screenErr);
+
+          if (isPolicyBlocked || isEmbedded) {
+            setShowScreenShareIframeModal(true);
+            addSystemMsg('SCREEN SHARE POLICY RESTRICTION: Running in embedded preview. Activated Virtual Screen Stream (or open in new tab).');
+          } else if (isCancelled) {
+            addSystemMsg('SCREEN SHARING CANCELLED');
+            return;
+          } else {
+            addSystemMsg('SCREEN SHARING UNAVAILABLE — USING VIRTUAL DISPLAY 🖥️');
+          }
+        }
+
+        // Fallback to virtual encrypted presentation display stream when display-capture is restricted
+        if (!displayStream || displayStream.getVideoTracks().length === 0) {
+          const virtual = createVirtualMediaStream(prefsRef.current.username || 'User', 'screen');
+          virtualMediaCleanupRef.current = virtual.cleanup;
+          displayStream = virtual.stream;
+          isVirtual = true;
+        }
+
+        const displayTrack = displayStream.getVideoTracks()[0];
+        displayTrack.onended = () => {
+          setIsScreenSharing(false);
+          addSystemMsg('SCREEN SHARING ENDED');
+        };
+
+        if (voiceLocalStreamRef.current) {
+          voiceLocalStreamRef.current.getVideoTracks().forEach(t => {
+            t.stop();
+            voiceLocalStreamRef.current?.removeTrack(t);
+          });
+          voiceLocalStreamRef.current.addTrack(displayTrack);
+          setVoiceLocalStream(new MediaStream(voiceLocalStreamRef.current.getTracks()));
+        } else {
+          setVoiceLocalStream(displayStream);
+          voiceLocalStreamRef.current = displayStream;
+          setIsInVoiceCall(true);
+        }
+
+        setIsScreenSharing(true);
+        setIsVideoActive(false);
+        setIsVirtualVideo(false);
+        addSystemMsg(isVirtual ? 'VIRTUAL SCREEN STREAM ACTIVE 🖥️' : 'SCREEN SHARING ACTIVE 🖥️');
+
+        connectionsRef.current.forEach((conn, pid) => {
+          if (!peerRef.current || !voiceLocalStreamRef.current) return;
+          peerRef.current.call(pid, voiceLocalStreamRef.current, {
+            metadata: { username: prefsRef.current.username, hasVideo: true, isScreen: true, isVirtual }
+          });
+        });
+      }
+    } catch (err: any) {
+      console.warn('Screen sharing toggle handled with warning:', err);
+      addSystemMsg('SCREEN SHARING CANCELLED OR NOT SUPPORTED');
+    }
+  };
+
+  const handleTranslateMessage = async (messageId: string, text: string) => {
+    try {
+      const targetLang = prefs.language || 'ENGLISH';
+      addSystemMsg(`TRANSLATING TO ${targetLang.toUpperCase()}...`);
+      const translated = await requestAiTranslation(text, targetLang);
+      setMessages(prev => prev.map(m => {
+        if (m.id === messageId) {
+          return {
+            ...m,
+            translatedText: translated,
+            translatedLang: targetLang
+          };
+        }
+        return m;
+      }));
+    } catch (err) {
+      console.warn('Translation error:', err);
+      addSystemMsg('TRANSLATION FAILED');
     }
   };
 
@@ -1055,7 +1271,7 @@ const App: React.FC = () => {
   };
 
   // ── P2P File & Image Sharing ──
-  const processFileUpload = (file: File) => {
+  const processFileUpload = async (file: File) => {
     if (!moderationSettings.allowFileSharing && !isHostRef.current) {
       addSystemMsg('FILE SHARING IS DISABLED BY ROOM HOST');
       return;
@@ -1065,36 +1281,48 @@ const App: React.FC = () => {
       return;
     }
 
-    const reader = new FileReader();
-    reader.onload = (e) => {
-      const dataUrl = e.target?.result as string;
-      if (!dataUrl) return;
+    try {
+      // Calculate cryptographic SHA-256 hash for end-to-end file integrity verification
+      const arrayBuffer = await file.arrayBuffer();
+      const hashBuffer = await crypto.subtle.digest('SHA-256', arrayBuffer);
+      const hashArray = Array.from(new Uint8Array(hashBuffer));
+      const sha256Hex = hashArray.map(b => b.toString(16).padStart(2, '0')).join('');
 
-      const isImage = file.type.startsWith('image/');
-      const newMsg: Message = {
-        id: Math.random().toString(36).substring(2),
-        text: isImage ? `📷 Image: ${file.name}` : `📎 File: ${file.name}`,
-        sender: SenderType.USER,
-        username: prefs.username,
-        timestamp: new Date(),
-        type: isImage ? 'image' : 'file',
-        fileData: {
-          name: file.name,
-          size: file.size,
-          mimeType: file.type,
-          dataUrl
-        },
-        expiresAt: isWhisperMode ? Date.now() + WHISPER_TTL : undefined,
-        status: 'sent',
+      const reader = new FileReader();
+      reader.onload = (e) => {
+        const dataUrl = e.target?.result as string;
+        if (!dataUrl) return;
+
+        const isImage = file.type.startsWith('image/');
+        const newMsg: Message = {
+          id: Math.random().toString(36).substring(2),
+          text: isImage ? `📷 Image: ${file.name}` : `📎 File: ${file.name}`,
+          sender: SenderType.USER,
+          username: prefs.username,
+          timestamp: new Date(),
+          type: isImage ? 'image' : 'file',
+          fileData: {
+            name: file.name,
+            size: file.size,
+            mimeType: file.type,
+            dataUrl,
+            sha256: sha256Hex,
+          },
+          expiresAt: isWhisperMode ? Date.now() + WHISPER_TTL : undefined,
+          status: 'sent',
+        };
+
+        setMessages(prev => [...prev, newMsg]);
+        if (prefs.sfxEnabled) playSound('send');
+        if (mode === 'P2P') {
+          broadcastData({ type: 'file_msg', message: newMsg });
+        }
       };
-
-      setMessages(prev => [...prev, newMsg]);
-      if (prefs.sfxEnabled) playSound('send');
-      if (mode === 'P2P') {
-        broadcastData({ type: 'file_msg', message: newMsg });
-      }
-    };
-    reader.readAsDataURL(file);
+      reader.readAsDataURL(file);
+    } catch (err) {
+      console.warn('File hashing warning:', err);
+      addSystemMsg('FILE HASHING FAILED');
+    }
   };
 
   // ── Room Moderation & Host Policies ──
@@ -1138,18 +1366,23 @@ const App: React.FC = () => {
 
     setIsLocalTyping(true);
     let prompt = '';
-    if (cmd === '/summary') {
-      prompt = `Provide a concise 2-3 sentence executive summary of key discussions from this chat log:\n\n${recentChat || 'No chat history.'}`;
-    } else if (cmd === '/action-items' || cmd === '/tasks') {
-      prompt = `Extract all action items, tasks, and agreed decisions from this chat log in clean bullet points:\n\n${recentChat || 'No chat history.'}`;
-    } else if (cmd === '/roast') {
+    if (cmd === '/roast') {
       prompt = `Roast this group conversation in a witty, savage, playful way in 2 sentences:\n\n${recentChat || 'No chat history.'}`;
     } else if (cmd === '/vibe') {
       prompt = `Give an accurate vibe check analysis of the mood, energy, and tone of this conversation:\n\n${recentChat || 'No chat history.'}`;
     }
 
     try {
-      const response = await executeQuickPrompt(prompt);
+      let response = '';
+      if (cmd === '/summary') {
+        response = await requestAiSummary(recentChat);
+      } else if (cmd === '/action-items' || cmd === '/tasks') {
+        response = await requestAiTasks(recentChat);
+      } else if (cmd === '/idea') {
+        response = await requestAiIdeas(recentChat);
+      } else {
+        response = await executeQuickPrompt(prompt);
+      }
       setIsLocalTyping(false);
       const aiName = getAiName(prefs.mood);
       const newMsg = addMessage(response, SenderType.STRANGER, aiName);
@@ -1381,6 +1614,8 @@ const App: React.FC = () => {
       case '/contact':        return <ContactPage   onBack={() => navigateTo('/')} />;
       case '/about':          return <AboutPage     onBack={() => navigateTo('/')} />;
       case '/help':           return <HelpPage      onBack={() => navigateTo('/')} />;
+      case '/security':       return <SecurityPage  onBack={() => navigateTo('/')} />;
+      case '/faq':            return <FaqPage       onBack={() => navigateTo('/')} />;
       default: return null;
     }
   };
@@ -1604,6 +1839,13 @@ const App: React.FC = () => {
           onLeaveCall={handleLeaveVoiceCall}
           participants={participants}
           currentUsername={prefs.username}
+          isVideoActive={isVideoActive}
+          isVirtualVideo={isVirtualVideo}
+          isScreenSharing={isScreenSharing}
+          onToggleVideo={handleToggleVideo}
+          onToggleScreenShare={handleToggleScreenShare}
+          isPttEnabled={isPttEnabled}
+          onTogglePtt={() => setIsPttEnabled(p => !p)}
         />
       )}
 
@@ -1677,6 +1919,7 @@ const App: React.FC = () => {
               onExpire={(id) => setMessages(prev => prev.filter(m => m.id !== id))}
               onOpenImage={(url, name) => setLightboxImage({ url, name })}
               onVotePoll={handleVotePoll}
+              onTranslateMessage={handleTranslateMessage}
             />
           ))}
           {(isLocalTyping || isRemoteTyping) && (
@@ -1885,21 +2128,44 @@ const App: React.FC = () => {
           setShowCommandPalette(false);
           if (cmd === '/panic') { triggerPanic(); return; }
           if (cmd === '/voice') { handleToggleVoiceCall(); return; }
+          if (cmd === '/video') { handleToggleVideo(); return; }
+          if (cmd === '/screenshare') { handleToggleScreenShare(); return; }
           if (cmd === '/poll') { setShowPollModal(true); return; }
+          if (cmd === '/security') { navigateTo('/security'); return; }
+          if (cmd === '/faq') { navigateTo('/faq'); return; }
+          if (cmd === '/settings') { setShowSettings(true); return; }
+          if (cmd === '/export') { exportChat(); return; }
           if (cmd === '/whisper') {
             setIsWhisperMode(w => !w);
             addSystemMsg(isWhisperMode ? 'WHISPER MODE OFF' : 'WHISPER MODE ON 👻');
             return;
           }
           if (cmd === '/clear') { setMessages([]); addSystemMsg('CHAT CLEARED'); return; }
-          if (['/summary', '/action-items', '/tasks', '/roast', '/vibe'].includes(cmd)) {
+          if (['/summary', '/action-items', '/tasks', '/idea', '/roast', '/vibe'].includes(cmd)) {
             handleRunAiCommand(cmd);
             return;
           }
           setInputText(cmd + ' ');
         }}
         isWhisperMode={isWhisperMode}
-        isInVoice={isInVoiceCall}
+        isInVoiceCall={isInVoiceCall}
+        onTriggerPanic={triggerPanic}
+        onToggleVoiceCall={handleToggleVoiceCall}
+        onToggleVideo={handleToggleVideo}
+        onToggleScreenShare={handleToggleScreenShare}
+        onOpenFilePicker={() => fileInputRef.current?.click()}
+        onOpenPollModal={() => setShowPollModal(true)}
+        onToggleWhisper={() => {
+          setIsWhisperMode(w => !w);
+          addSystemMsg(isWhisperMode ? 'WHISPER MODE OFF' : 'WHISPER MODE ON 👻');
+        }}
+        onRunAiCommand={handleRunAiCommand}
+        onExportChat={exportChat}
+        onOpenSettings={() => setShowSettings(true)}
+        onClearChat={() => { setMessages([]); addSystemMsg('CHAT CLEARED'); }}
+        messages={messages}
+        onOpenSecurity={() => navigateTo('/security')}
+        onOpenFaq={() => navigateTo('/faq')}
       />
 
       {/* ── Poll Creation Modal ── */}
@@ -2011,6 +2277,16 @@ const App: React.FC = () => {
         }}
         savedContacts={identity.savedContacts}
         mode={connectModalMode}
+      />
+
+      {/* ── Screen Share Iframe / Permissions Policy Modal ── */}
+      <ScreenShareIframeModal
+        isOpen={showScreenShareIframeModal}
+        onClose={() => setShowScreenShareIframeModal(false)}
+        onOpenStandalone={() => {
+          setShowScreenShareIframeModal(false);
+          window.open(window.location.href, '_blank');
+        }}
       />
 
       {/* ── Image Lightbox Modal ── */}

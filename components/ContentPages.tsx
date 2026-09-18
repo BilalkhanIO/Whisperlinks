@@ -1,5 +1,5 @@
 import React from 'react';
-import { ArrowLeft, Bot, FileText, LifeBuoy, Mail, ShieldCheck } from 'lucide-react';
+import { ArrowLeft, Bot, FileText, LifeBuoy, Mail, ShieldCheck, Shield, Lock, Key, HelpCircle, CheckCircle2 } from 'lucide-react';
 import { AdBanner } from './ads/AdBanner';
 
 interface PageProps {
@@ -236,6 +236,110 @@ export const HelpPage: React.FC<PageProps> = ({ onBack }) => (
       <p>
         Use Group Link only with people you trust. Avoid sharing confidential information with any AI system unless you have
         reviewed the provider’s data-handling terms and your own risk tolerance supports that use.
+      </p>
+    </Section>
+  </PageShell>
+);
+
+export const SecurityPage: React.FC<PageProps> = ({ onBack }) => (
+  <PageShell title="Security Architecture & Audit" eyebrow="Technical Verification" icon={<Shield className="text-neon-green" />} onBack={onBack}>
+    <Section title="Zero-Knowledge & Memory-Only Backend">
+      <p>
+        WhisperLink is architected from the ground up to prevent server-side data retention. The signalling backend operates
+        strictly in-memory:
+      </p>
+      <ul className="space-y-2 list-none pl-1 text-sm font-mono text-zinc-300">
+        <li className="flex items-center gap-2">
+          <CheckCircle2 size={14} className="text-neon-green shrink-0" />
+          <span>No database: All ephemeral presence tokens expire after 5 minutes (TTL) and are held only in RAM.</span>
+        </li>
+        <li className="flex items-center gap-2">
+          <CheckCircle2 size={14} className="text-neon-green shrink-0" />
+          <span>Zero message logs: Chat messages and files travel directly between browsers over WebRTC DataChannels.</span>
+        </li>
+        <li className="flex items-center gap-2">
+          <CheckCircle2 size={14} className="text-neon-green shrink-0" />
+          <span>No identity accounts: Private keys never touch any server.</span>
+        </li>
+      </ul>
+    </Section>
+
+    <Section title="Cryptographic WhisperID (Web Crypto API)">
+      <p>
+        Instead of usernames backed by centralized databases, WhisperLink utilizes ECDSA P-256 keypairs generated inside the
+        user’s browser using the standardized W3C Web Crypto API.
+      </p>
+      <p>
+        Your human-readable alias (e.g., <span className="text-neon-green font-mono">alice#7K4M</span>) is deterministically
+        anchored to a SHA-256 fingerprint of your public key. When protected with a local PIN, private keys are encrypted using
+        AES-GCM-256 with keys derived via PBKDF2 (100,000 rounds of SHA-256).
+      </p>
+    </Section>
+
+    <Section title="Media Encryption & DTLS-SRTP">
+      <p>
+        Voice, video, and screen sharing streams leverage WebRTC’s mandatory DTLS (Datagram Transport Layer Security) and SRTP
+        (Secure Real-time Transport Protocol). Streams are negotiated peer-to-peer with ephemeral session keys that are never shared
+        with intermediaries.
+      </p>
+    </Section>
+
+    <Section title="File Transfer Integrity (SHA-256)">
+      <p>
+        All peer-to-peer file transfers calculate client-side cryptographic SHA-256 digests in real-time. The sender and recipient
+        both verify file hash integrity to guarantee that documents and media cannot be intercepted or modified in transit.
+      </p>
+    </Section>
+
+    <Section title="Panic Wipe & Content Security Policy">
+      <p>
+        In an emergency, activating the Panic feature immediately halts all media tracks, closes active peer connections, clears
+        ephemeral memory state, and triggers UI camouflage.
+      </p>
+      <p>
+        Strict Content Security Policy (CSP) and no-sniff headers are enforced at the network layer to mitigate script injection and
+        cross-origin threats.
+      </p>
+    </Section>
+  </PageShell>
+);
+
+export const FaqPage: React.FC<PageProps> = ({ onBack }) => (
+  <PageShell title="Frequently Asked Questions" eyebrow="FAQ & Guides" icon={<HelpCircle className="text-cyan-400" />} onBack={onBack}>
+    <Section title="How does anonymity work without accounts?">
+      <p>
+        You do not register with an email, phone number, or password. When you launch WhisperLink, your browser creates a local
+        cryptographic keypair. Your WhisperID is calculated directly from your public key fingerprint. You can connect with others
+        either by sharing an ephemeral room link or by sharing your WhisperID.
+      </p>
+    </Section>
+
+    <Section title="Can the server read my messages or files?">
+      <p>
+        No. In peer-to-peer rooms, messages and files are transmitted directly browser-to-browser over encrypted WebRTC
+        DataChannels. The server only facilitates the initial handshake (signaling) and has no access to room conversations.
+      </p>
+    </Section>
+
+    <Section title="How do I backup or transfer my identity?">
+      <p>
+        Click on the Identity badge (or press <span className="font-mono text-xs bg-white/10 px-1.5 py-0.5 rounded">Ctrl+K</span> and select &quot;WhisperID&quot;).
+        You can reveal your deterministic 12-word mnemonic recovery phrase. Store this phrase safely offline to restore your cryptographic identity
+        on another device.
+      </p>
+    </Section>
+
+    <Section title="Are there ads in the chat rooms?">
+      <p>
+        Never. In accordance with strict privacy guidelines and advertising policies, ads are 100% prohibited from chat interfaces,
+        call rooms, and ephemeral spaces. Ad placements are confined solely to static public documentation and educational pages.
+      </p>
+    </Section>
+
+    <Section title="What happens when I click the PANIC button?">
+      <p>
+        The emergency panic trigger immediately tears down all active peer connections, revokes microphone and camera streams, clears
+        unencrypted memory logs, and displays a neutral camouflage screen (such as spreadsheet data or code) to protect your privacy in physical environments.
       </p>
     </Section>
   </PageShell>

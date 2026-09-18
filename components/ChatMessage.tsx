@@ -3,7 +3,7 @@ import { Message, SenderType } from '../types';
 import { EncryptionEffect } from './EncryptionEffect';
 import {
   ShieldCheck, Copy, Check, CheckCheck, CornerUpLeft, Ghost,
-  Play, Pause, Download, FileText, BarChart2, CheckCircle2, Volume2
+  Play, Pause, Download, FileText, BarChart2, CheckCircle2, Volume2, Languages
 } from 'lucide-react';
 import { getInitials } from '../utils';
 
@@ -17,6 +17,7 @@ interface ChatMessageProps {
   onExpire: (messageId: string) => void;
   onOpenImage?: (imageUrl: string, imageName?: string) => void;
   onVotePoll?: (messageId: string, optionIndex: number) => void;
+  onTranslateMessage?: (messageId: string, text: string) => void;
 }
 
 export const ChatMessage: React.FC<ChatMessageProps> = memo(({
@@ -26,7 +27,8 @@ export const ChatMessage: React.FC<ChatMessageProps> = memo(({
   onReply,
   onExpire,
   onOpenImage,
-  onVotePoll
+  onVotePoll,
+  onTranslateMessage
 }) => {
   const [copied, setCopied] = useState(false);
   const [showReactions, setShowReactions] = useState(false);
@@ -160,6 +162,11 @@ export const ChatMessage: React.FC<ChatMessageProps> = memo(({
                 <button onClick={() => onReply(message)} className="p-1 rounded text-zinc-600 hover:text-zinc-300 transition-colors" aria-label="Reply" title="Reply">
                   <CornerUpLeft size={11} />
                 </button>
+                {onTranslateMessage && (
+                  <button onClick={() => onTranslateMessage(message.id, message.text)} className="p-1 rounded text-zinc-600 hover:text-cyan-400 transition-colors" aria-label="Translate" title="Translate message">
+                    <Languages size={11} />
+                  </button>
+                )}
                 <button onClick={() => setShowReactions(r => !r)} className="p-1 rounded text-zinc-600 hover:text-zinc-300 transition-colors" aria-label="React" title="React">
                   <span className="text-[11px]">+</span>
                 </button>
@@ -256,25 +263,43 @@ export const ChatMessage: React.FC<ChatMessageProps> = memo(({
                     <span className="truncate max-w-[180px]">{message.fileData.name}</span>
                     <span>{formatFileSize(message.fileData.size)}</span>
                   </div>
+                  {message.fileData.sha256 && (
+                    <div className="flex items-center gap-1 text-[9px] font-mono text-emerald-400/90 px-0.5">
+                      <ShieldCheck size={10} className="text-emerald-400 shrink-0" />
+                      <span className="truncate" title={`SHA-256 Digest: ${message.fileData.sha256}`}>
+                        SHA-256: {message.fileData.sha256.slice(0, 12)}...{message.fileData.sha256.slice(-6)} ✓
+                      </span>
+                    </div>
+                  )}
                 </div>
               ) : message.type === 'file' && message.fileData ? (
                 /* 3. Document / File Card */
-                <div className="flex items-center gap-3 p-2 rounded-xl bg-void-black/40 border border-white/10 min-w-[200px]">
-                  <div className="p-2.5 rounded-lg bg-blue-500/10 text-blue-400">
-                    <FileText size={20} />
+                <div className="space-y-1">
+                  <div className="flex items-center gap-3 p-2 rounded-xl bg-void-black/40 border border-white/10 min-w-[200px]">
+                    <div className="p-2.5 rounded-lg bg-blue-500/10 text-blue-400">
+                      <FileText size={20} />
+                    </div>
+                    <div className="flex-1 min-w-0">
+                      <p className="text-xs font-mono font-medium text-zinc-200 truncate">{message.fileData.name}</p>
+                      <p className="text-[10px] font-mono text-zinc-500">{formatFileSize(message.fileData.size)}</p>
+                    </div>
+                    <a
+                      href={message.fileData.dataUrl}
+                      download={message.fileData.name}
+                      className="p-2 text-zinc-400 hover:text-neon-green hover:bg-white/5 rounded-lg transition-colors"
+                      title="Download file"
+                    >
+                      <Download size={15} />
+                    </a>
                   </div>
-                  <div className="flex-1 min-w-0">
-                    <p className="text-xs font-mono font-medium text-zinc-200 truncate">{message.fileData.name}</p>
-                    <p className="text-[10px] font-mono text-zinc-500">{formatFileSize(message.fileData.size)}</p>
-                  </div>
-                  <a
-                    href={message.fileData.dataUrl}
-                    download={message.fileData.name}
-                    className="p-2 text-zinc-400 hover:text-neon-green hover:bg-white/5 rounded-lg transition-colors"
-                    title="Download file"
-                  >
-                    <Download size={15} />
-                  </a>
+                  {message.fileData.sha256 && (
+                    <div className="flex items-center gap-1 text-[9px] font-mono text-emerald-400/90 px-1">
+                      <ShieldCheck size={10} className="text-emerald-400 shrink-0" />
+                      <span className="truncate" title={`SHA-256 Digest: ${message.fileData.sha256}`}>
+                        SHA-256: {message.fileData.sha256.slice(0, 12)}...{message.fileData.sha256.slice(-6)} ✓
+                      </span>
+                    </div>
+                  )}
                 </div>
               ) : message.type === 'poll' && message.pollData ? (
                 /* 4. Interactive Poll */
@@ -342,6 +367,16 @@ export const ChatMessage: React.FC<ChatMessageProps> = memo(({
                   ) : (
                     <span className="whitespace-pre-wrap break-words">{message.text}</span>
                   )}
+
+                  {message.translatedText && (
+                    <div className="mt-2 pt-1.5 border-t border-white/10 text-xs text-cyan-200">
+                      <div className="flex items-center gap-1 text-[9px] font-mono text-cyan-400 mb-0.5">
+                        <Languages size={10} />
+                        <span>TRANSLATION ({message.translatedLang || 'AUTO'})</span>
+                      </div>
+                      <p className="italic font-sans">{message.translatedText}</p>
+                    </div>
+                  )}
                 </>
               )}
 
@@ -357,12 +392,17 @@ export const ChatMessage: React.FC<ChatMessageProps> = memo(({
               </div>
             </div>
 
-            {/* AI side action buttons */}
+            {/* AI / Peer side action buttons */}
             {!isUser && (
               <div className="opacity-0 group-hover:opacity-100 transition-opacity flex gap-0.5">
                 <button onClick={() => onReply(message)} className="p-1 rounded text-zinc-600 hover:text-zinc-300 transition-colors" aria-label="Reply" title="Reply">
                   <CornerUpLeft size={11} />
                 </button>
+                {onTranslateMessage && (
+                  <button onClick={() => onTranslateMessage(message.id, message.text)} className="p-1 rounded text-zinc-600 hover:text-cyan-400 transition-colors" aria-label="Translate" title="Translate message">
+                    <Languages size={11} />
+                  </button>
+                )}
                 <button onClick={() => setShowReactions(r => !r)} className="p-1 rounded text-zinc-600 hover:text-zinc-300 transition-colors" aria-label="React" title="React">
                   <span className="text-[11px]">+</span>
                 </button>

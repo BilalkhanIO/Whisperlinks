@@ -119,3 +119,72 @@ export const executeQuickPrompt = async (prompt: string): Promise<string> => {
   }
 };
 
+export const requestAiSummary = async (chatHistory: string): Promise<string> => {
+  try {
+    const res = await fetch("/api/gemini/summary", {
+      method: "POST",
+      headers: getHeaders(),
+      body: JSON.stringify({ chatHistory }),
+    });
+    if (!res.ok) {
+      return executeQuickPrompt(`Provide a concise, crystal-clear 2-3 sentence executive summary of this meeting/chat:\n\n${chatHistory || 'No history'}`);
+    }
+    const data = await res.json();
+    return data.summary || data.text || "No summary available.";
+  } catch {
+    return executeQuickPrompt(`Provide a concise, crystal-clear 2-3 sentence executive summary of this meeting/chat:\n\n${chatHistory || 'No history'}`);
+  }
+};
+
+export const requestAiTasks = async (chatHistory: string): Promise<string> => {
+  try {
+    const res = await fetch("/api/gemini/tasks", {
+      method: "POST",
+      headers: getHeaders(),
+      body: JSON.stringify({ chatHistory }),
+    });
+    if (!res.ok) {
+      return executeQuickPrompt(`Extract actionable items, tasks, and agreed next steps from this chat as markdown bullets:\n\n${chatHistory || 'No history'}`);
+    }
+    const data = await res.json();
+    return data.tasks || data.text || "No action items identified.";
+  } catch {
+    return executeQuickPrompt(`Extract actionable items, tasks, and agreed next steps from this chat as markdown bullets:\n\n${chatHistory || 'No history'}`);
+  }
+};
+
+export const requestAiIdeas = async (topic: string): Promise<string> => {
+  try {
+    const res = await fetch("/api/gemini/idea", {
+      method: "POST",
+      headers: getHeaders(),
+      body: JSON.stringify({ topic }),
+    });
+    if (!res.ok) {
+      return executeQuickPrompt(`Generate 4 clever, creative ideas or angles regarding: "${topic}". Be concise and insightful.`);
+    }
+    const data = await res.json();
+    return data.ideas || data.text || "No ideas generated.";
+  } catch {
+    return executeQuickPrompt(`Generate 4 clever, creative ideas or angles regarding: "${topic}". Be concise and insightful.`);
+  }
+};
+
+export const requestAiTranslation = async (text: string, targetLang: string): Promise<string> => {
+  try {
+    const res = await fetch("/api/gemini/translate", {
+      method: "POST",
+      headers: getHeaders(),
+      body: JSON.stringify({ text, targetLang }),
+    });
+    if (!res.ok) {
+      return executeQuickPrompt(`Translate this text accurately into ${targetLang}. Return ONLY the direct translation:\n\n"${text}"`);
+    }
+    const data = await res.json();
+    return data.translation || data.text || text;
+  } catch {
+    return executeQuickPrompt(`Translate this text accurately into ${targetLang}. Return ONLY the direct translation:\n\n"${text}"`);
+  }
+};
+
+

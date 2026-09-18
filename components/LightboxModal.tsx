@@ -29,7 +29,7 @@ export const LightboxModal: React.FC<LightboxModalProps> = ({ imageUrl, imageNam
       setCopied(true);
       setTimeout(() => setCopied(false), 2000);
     } catch (err) {
-      console.error('Failed to copy image', err);
+      console.warn('Failed to copy image to clipboard:', err);
     }
   };
 

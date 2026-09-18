@@ -111,7 +111,7 @@ export const WhisperIdModal: React.FC<WhisperIdModalProps> = ({
       onUpdateIdentity(updated);
       setIsEditingUsername(false);
     } catch (e) {
-      console.error(e);
+      console.warn('Failed to update username:', e);
     }
   };
 

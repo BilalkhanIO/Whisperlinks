@@ -2,7 +2,8 @@
   "name": "WhisperLink",
   "description": "Private, account-free chat. Messages are exchanged directly between browsers using peer-to-peer WebRTC.",
   "requestFramePermissions": [
-    "microphone"
+    "microphone",
+    "camera"
   ],
   "majorCapabilities": [
     "MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"
