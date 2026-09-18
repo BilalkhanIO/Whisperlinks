@@ -9,7 +9,7 @@ export interface Message {
   text: string;
   sender: SenderType;
   username?: string;
-  timestamp: Date;
+  timestamp: Date | string | number;
   isEncrypted?: boolean;
   isStreaming?: boolean;
   replyTo?: { id: string; text: string; username?: string };

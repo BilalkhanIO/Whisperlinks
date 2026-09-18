@@ -262,7 +262,14 @@ export const CommandPalette: React.FC<CommandPaletteProps> = ({
         id: `msg-${m.id}`,
         category: 'Messages',
         title: m.text.length > 60 ? m.text.substring(0, 60) + '...' : m.text,
-        subtitle: `${m.username || 'User'} • ${new Date(m.timestamp).toLocaleTimeString()}`,
+        subtitle: `${m.username || 'User'} • ${(() => {
+          try {
+            const d = m.timestamp instanceof Date ? m.timestamp : new Date(m.timestamp);
+            return isNaN(d.getTime()) ? '' : d.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
+          } catch {
+            return '';
+          }
+        })()}`,
         icon: <Search className="text-neon-purple" size={15} />,
         action: () => {
           if (onSelectMessage) onSelectMessage(m.id);

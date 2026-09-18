@@ -372,7 +372,11 @@ const App: React.FC = () => {
   };
 
   const exportChat = () => {
-    const text = messages.map(m => `[${m.timestamp.toLocaleString()}] ${m.sender === SenderType.SYSTEM ? 'SYSTEM' : (m.username || 'User')}: ${m.text}`).join('\n');
+    const text = messages.map(m => {
+      const d = m.timestamp instanceof Date ? m.timestamp : new Date(m.timestamp);
+      const timeLabel = isNaN(d.getTime()) ? '' : d.toLocaleString();
+      return `[${timeLabel}] ${m.sender === SenderType.SYSTEM ? 'SYSTEM' : (m.username || 'User')}: ${m.text}`;
+    }).join('\n');
     const blob = new Blob([text], { type: 'text/plain' });
     const url = URL.createObjectURL(blob);
     const a = document.createElement('a');

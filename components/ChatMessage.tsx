@@ -42,7 +42,15 @@ export const ChatMessage: React.FC<ChatMessageProps> = memo(({
 
   const isUser   = message.sender === SenderType.USER;
   const isSystem = message.sender === SenderType.SYSTEM;
-  const timeStr  = message.timestamp.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
+  const dateObj = useMemo(() => {
+    try {
+      const d = message.timestamp instanceof Date ? message.timestamp : new Date(message.timestamp);
+      return isNaN(d.getTime()) ? new Date() : d;
+    } catch {
+      return new Date();
+    }
+  }, [message.timestamp]);
+  const timeStr = dateObj.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
   const initials = getInitials(message.username ?? (isUser ? 'ME' : 'AI'));
 
   // Whisper countdown
@@ -383,7 +391,7 @@ export const ChatMessage: React.FC<ChatMessageProps> = memo(({
               {/* Status and timestamp */}
               <div className={`flex items-center gap-1 mt-1.5 opacity-35 ${isUser ? 'justify-end' : 'justify-start'}`}>
                 <time
-                  dateTime={message.timestamp.toISOString()}
+                  dateTime={dateObj.toISOString()}
                   className="block text-[9px]"
                   aria-hidden="true"
                 >{timeStr}</time>
