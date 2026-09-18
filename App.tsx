@@ -1632,12 +1632,18 @@ const App: React.FC = () => {
       <LandingPage
         username={prefs.username}
         setUsername={(name) => {
-          setPrefs({ ...prefs, username: name });
-          setIdentity(prev => {
-            const next = { ...prev, username: name };
-            saveUserIdentity(next);
-            return next;
-          });
+          setPrefs(prev => ({ ...prev, username: name }));
+          changeUsername(name)
+            .then(updated => {
+              setIdentity(updated);
+            })
+            .catch(() => {
+              setIdentity(prev => ({
+                ...prev,
+                username: name,
+                whisperId: `${name}#${prev.shortTag}`
+              }));
+            });
         }}
         onEnter={handleEnterVoid}
         onNavigate={navigateTo}
